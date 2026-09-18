@@ -6,6 +6,7 @@ import '../../models/tcg_card.dart';
 import '../../state/app_state.dart';
 import '../../widgets/photo_placeholder.dart';
 import 'assign_release_screen.dart';
+import 'photo_preview_screen.dart';
 
 /// 1a step 2 — Batch triage. Also doubles as the "sort the unsorted tray"
 /// screen: without auto-match every shot lands here nameless either way, so
@@ -124,18 +125,20 @@ class _BatchTriageScreenState extends State<BatchTriageScreen> {
     await state.deleteCard(card.id);
     setState(() => _cards.removeWhere((c) => c.id == card.id));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Card binned'),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () async {
-            final restored = await state.addCard(card);
-            setState(() => _cards.add(restored));
-          },
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: const Text('Card binned'),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () async {
+              final restored = await state.addCard(card);
+              setState(() => _cards.add(restored));
+            },
+          ),
         ),
-      ),
-    );
+      );
   }
 
   Future<void> _binAll(AppState state) async {
@@ -161,20 +164,22 @@ class _BatchTriageScreenState extends State<BatchTriageScreen> {
     await state.deleteCards(removed.map((c) => c.id).toList());
     setState(() => _cards.clear());
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Binned ${removed.length} cards'),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () async {
-            for (final card in removed) {
-              await state.addCard(card);
-            }
-            setState(() => _cards = List.of(removed));
-          },
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('Binned ${removed.length} cards'),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () async {
+              for (final card in removed) {
+                await state.addCard(card);
+              }
+              setState(() => _cards = List.of(removed));
+            },
+          ),
         ),
-      ),
-    );
+      );
   }
 
   @override
@@ -212,11 +217,35 @@ class _BatchTriageScreenState extends State<BatchTriageScreen> {
                 final card = _cards[index];
                 return ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: SizedBox(
-                    width: 44,
-                    child: PhotoPlaceholder(
-                      path: card.thumbnailPath,
-                      dashed: !card.hasPhoto,
+                  leading: GestureDetector(
+                    onTap: card.thumbnailPath == null
+                        ? null
+                        : () async {
+                            final edited = await Navigator.push<String>(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => PhotoPreviewScreen(
+                                  path: card.thumbnailPath!,
+                                ),
+                              ),
+                            );
+                            if (edited == null) return;
+                            final updated = card.copyWith(
+                              photoPaths: [
+                                edited,
+                                ...card.photoPaths.skip(1),
+                              ],
+                            );
+                            await state.updateCard(updated);
+                            if (!mounted) return;
+                            setState(() => _cards[index] = updated);
+                          },
+                    child: SizedBox(
+                      width: 44,
+                      child: PhotoPlaceholder(
+                        path: card.thumbnailPath,
+                        dashed: !card.hasPhoto,
+                      ),
                     ),
                   ),
                   title: Text(

@@ -3,8 +3,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
 /// Opens and migrates the local SQLite database. Everything the app stores
-/// — releases, sub-folders, cards, value entries — lives on the device;
-/// there is no server and nothing is synced.
+/// — releases, cards, value entries — lives on the device; there is no
+/// server and nothing is synced.
 class AppDatabase {
   AppDatabase._();
   static final AppDatabase instance = AppDatabase._();
@@ -23,7 +23,7 @@ class AppDatabase {
     final path = p.join(dir.path, 'pokedex_tcg.db');
     return openDatabase(
       path,
-      version: 1,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE releases (
@@ -31,18 +31,12 @@ class AppDatabase {
             name TEXT NOT NULL,
             dateCreated TEXT NOT NULL,
             coverPhotoPath TEXT,
+            coverPortrait INTEGER NOT NULL DEFAULT 0,
             orderIndex INTEGER NOT NULL,
             officialSetCode TEXT,
-            totalCardsInSet INTEGER
-          )
-        ''');
-        await db.execute('''
-          CREATE TABLE sub_folders (
-            id TEXT PRIMARY KEY,
-            releaseId TEXT NOT NULL,
-            name TEXT NOT NULL,
-            orderIndex INTEGER NOT NULL,
-            FOREIGN KEY (releaseId) REFERENCES releases (id) ON DELETE CASCADE
+            totalCardsInSet INTEGER,
+            category TEXT NOT NULL DEFAULT 'Others',
+            language TEXT
           )
         ''');
         await db.execute('''
@@ -51,19 +45,22 @@ class AppDatabase {
             name TEXT,
             number TEXT,
             rarity TEXT,
+            language TEXT,
+            kind TEXT,
+            color TEXT,
+            type TEXT,
             condition TEXT,
             copies INTEGER NOT NULL DEFAULT 1,
             releaseId TEXT,
-            subFolderId TEXT,
             photoPaths TEXT NOT NULL DEFAULT '',
             pricePaid REAL,
             datePaid TEXT,
             forTrade INTEGER NOT NULL DEFAULT 0,
             onWishlist INTEGER NOT NULL DEFAULT 0,
+            isFavorite INTEGER NOT NULL DEFAULT 0,
             notes TEXT,
             createdAt TEXT NOT NULL,
-            FOREIGN KEY (releaseId) REFERENCES releases (id) ON DELETE SET NULL,
-            FOREIGN KEY (subFolderId) REFERENCES sub_folders (id) ON DELETE SET NULL
+            FOREIGN KEY (releaseId) REFERENCES releases (id) ON DELETE SET NULL
           )
         ''');
         await db.execute('''
@@ -79,9 +76,32 @@ class AppDatabase {
           'CREATE UNIQUE INDEX value_entries_card_date ON value_entries (cardId, date)',
         );
         await db.execute('CREATE INDEX cards_release ON cards (releaseId)');
-        await db.execute(
-          'CREATE INDEX cards_sub_folder ON cards (subFolderId)',
-        );
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          // Sub-folders were removed in this version. Their old table and
+          // cards.subFolderId column are left in place rather than dropped:
+          // ALTER TABLE ... DROP COLUMN needs SQLite >=3.35, which isn't
+          // guaranteed on every Android version this app supports. Inert
+          // dead schema on an upgrading install is zero-risk; a migration
+          // that can fail on some devices is not.
+          await db.execute(
+            "ALTER TABLE releases ADD COLUMN coverPortrait INTEGER NOT NULL DEFAULT 0",
+          );
+          await db.execute(
+            "ALTER TABLE releases ADD COLUMN category TEXT NOT NULL DEFAULT 'Others'",
+          );
+          await db.execute(
+            'ALTER TABLE cards ADD COLUMN isFavorite INTEGER NOT NULL DEFAULT 0',
+          );
+        }
+        if (oldVersion < 3) {
+          await db.execute('ALTER TABLE releases ADD COLUMN language TEXT');
+          await db.execute('ALTER TABLE cards ADD COLUMN language TEXT');
+          await db.execute('ALTER TABLE cards ADD COLUMN kind TEXT');
+          await db.execute('ALTER TABLE cards ADD COLUMN color TEXT');
+          await db.execute('ALTER TABLE cards ADD COLUMN type TEXT');
+        }
       },
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');

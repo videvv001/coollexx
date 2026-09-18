@@ -8,7 +8,9 @@ import '../../models/value_entry.dart';
 import '../../state/app_state.dart';
 import '../../utils/formatting.dart';
 import '../../widgets/photo_placeholder.dart';
+import '../shared/card_image_viewer.dart';
 import 'add_value_sheet.dart';
+import 'edit_card_screen.dart';
 import 'value_graph.dart';
 import 'value_history_screen.dart';
 
@@ -23,6 +25,7 @@ class CardDetailScreen extends StatefulWidget {
 
 class _CardDetailScreenState extends State<CardDetailScreen> {
   ValueRange _range = ValueRange.month;
+  final Map<ValueRange, int> _counts = Map.of(valueRangeDefaultCount);
   TcgCard? _card;
   List<ValueEntry> _entries = [];
 
@@ -79,6 +82,26 @@ class _CardDetailScreenState extends State<CardDetailScreen> {
     setState(() => _card = updated);
   }
 
+  Future<void> _toggleFavorite(AppState state) async {
+    final card = _card!;
+    final updated = card.copyWith(isFavorite: !card.isFavorite);
+    await state.updateCard(updated);
+    setState(() => _card = updated);
+  }
+
+  String _countLabel(ValueRange range, int count) {
+    switch (range) {
+      case ValueRange.day:
+        return '${count}d';
+      case ValueRange.week:
+        return '${count}w';
+      case ValueRange.month:
+        return '${count}m';
+      case ValueRange.year:
+        return '${count}y';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
@@ -92,15 +115,35 @@ class _CardDetailScreenState extends State<CardDetailScreen> {
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        final windowed = state.value.windowed(_entries, _range);
+        final buckets = state.value.buckets(
+          _entries,
+          _range,
+          _counts[_range]!,
+        );
         final delta = state.value.deltaVsDaysAgo(_entries, 30);
         return Scaffold(
           appBar: AppBar(
             title: Text(card.isUntitled ? 'Untitled card' : card.name!),
             actions: [
+              IconButton(
+                icon: Icon(card.isFavorite ? Icons.star : Icons.star_border),
+                color: card.isFavorite
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
+                onPressed: () => _toggleFavorite(state),
+              ),
               PopupMenuButton<String>(
                 onSelected: (choice) async {
                   switch (choice) {
+                    case 'edit':
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => EditCardScreen(card: card),
+                        ),
+                      );
+                      await _load(state);
+                      break;
                     case 'trade':
                       await _toggleFlag(state, forTrade: !card.forTrade);
                       break;
@@ -135,6 +178,7 @@ class _CardDetailScreenState extends State<CardDetailScreen> {
                   }
                 },
                 itemBuilder: (context) => [
+                  const PopupMenuItem(value: 'edit', child: Text('Edit')),
                   PopupMenuItem(
                     value: 'trade',
                     child: Text(
@@ -162,11 +206,16 @@ class _CardDetailScreenState extends State<CardDetailScreen> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SizedBox(
-                    width: 120,
-                    child: PhotoPlaceholder(
-                      path: card.thumbnailPath,
-                      dashed: !card.hasPhoto,
+                  GestureDetector(
+                    onTap: card.hasPhoto
+                        ? () => openCardImageViewer(context, card.photoPaths)
+                        : null,
+                    child: SizedBox(
+                      width: 120,
+                      child: PhotoPlaceholder(
+                        path: card.thumbnailPath,
+                        dashed: !card.hasPhoto,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 16),
@@ -176,6 +225,10 @@ class _CardDetailScreenState extends State<CardDetailScreen> {
                       children: [
                         if (card.number != null) Text('#${card.number}'),
                         if (card.rarity != null) Text(card.rarity!),
+                        if (card.kind != null) Text(card.kind!),
+                        if (card.color != null) Text(card.color!),
+                        if (card.type != null) Text(card.type!),
+                        if (card.language != null) Text(card.language!.label),
                         const SizedBox(height: 12),
                         Row(
                           children: [
@@ -209,6 +262,31 @@ class _CardDetailScreenState extends State<CardDetailScreen> {
                   ),
                 ],
               ),
+              if (card.photoPaths.length > 1) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: 64,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: card.photoPaths.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 8),
+                    itemBuilder: (context, index) => GestureDetector(
+                      onTap: () => openCardImageViewer(
+                        context,
+                        card.photoPaths,
+                        initialIndex: index,
+                      ),
+                      child: SizedBox(
+                        width: 64,
+                        child: PhotoPlaceholder(
+                          path: card.photoPaths[index],
+                          borderRadius: 8,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 24),
               Text(
                 'My value · latest',
@@ -236,6 +314,7 @@ class _CardDetailScreenState extends State<CardDetailScreen> {
               ),
               const SizedBox(height: 12),
               SegmentedButton<ValueRange>(
+                showSelectedIcon: false,
                 segments: const [
                   ButtonSegment(value: ValueRange.day, label: Text('Day')),
                   ButtonSegment(value: ValueRange.week, label: Text('Week')),
@@ -245,8 +324,22 @@ class _CardDetailScreenState extends State<CardDetailScreen> {
                 selected: {_range},
                 onSelectionChanged: (s) => setState(() => _range = s.first),
               ),
+              const SizedBox(height: 8),
+              SegmentedButton<int>(
+                showSelectedIcon: false,
+                segments: [
+                  for (final count in valueRangeCountOptions[_range]!)
+                    ButtonSegment(
+                      value: count,
+                      label: Text(_countLabel(_range, count)),
+                    ),
+                ],
+                selected: {_counts[_range]!},
+                onSelectionChanged: (s) =>
+                    setState(() => _counts[_range] = s.first),
+              ),
               const SizedBox(height: 16),
-              ValueGraph(entries: windowed),
+              ValueGraph(buckets: buckets),
               const SizedBox(height: 12),
               Row(
                 children: [

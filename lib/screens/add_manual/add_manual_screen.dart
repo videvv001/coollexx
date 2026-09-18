@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../models/card_language.dart';
+import '../../models/release_category.dart';
 import '../../models/tcg_card.dart';
 import '../../state/app_state.dart';
+import '../shared/card_category_fields.dart';
 
 /// 1d screen 6 — "Add without a photo". No local card catalogue is bundled
 /// (auto-match needs a server and was cut), so this always goes straight to
@@ -20,7 +23,13 @@ class AddManualScreen extends StatefulWidget {
 class _AddManualScreenState extends State<AddManualScreen> {
   static const _uuid = Uuid();
   final _nameController = TextEditingController();
+  final _numberController = TextEditingController();
   String? _releaseId;
+  CardLanguage? _language;
+  String? _rarity;
+  String? _kind;
+  String? _color;
+  String? _type;
   int _copies = 1;
 
   @override
@@ -29,12 +38,28 @@ class _AddManualScreenState extends State<AddManualScreen> {
     _releaseId = widget.releaseId;
   }
 
+  ReleaseCategory _category(AppState state) {
+    if (_releaseId == null) return ReleaseCategory.others;
+    for (final r in state.releases) {
+      if (r.id == _releaseId) return r.category;
+    }
+    return ReleaseCategory.others;
+  }
+
   Future<void> _save(AppState state) async {
     final card = TcgCard(
       id: _uuid.v4(),
       name: _nameController.text.trim().isEmpty
           ? null
           : _nameController.text.trim(),
+      number: _numberController.text.trim().isEmpty
+          ? null
+          : _numberController.text.trim(),
+      rarity: _rarity,
+      language: _language,
+      kind: _kind,
+      color: _color,
+      type: _type,
       copies: _copies,
       releaseId: _releaseId,
       createdAt: DateTime.now(),
@@ -51,12 +76,6 @@ class _AddManualScreenState extends State<AddManualScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          TextField(
-            controller: _nameController,
-            autofocus: true,
-            decoration: const InputDecoration(labelText: 'Name'),
-          ),
-          const SizedBox(height: 16),
           DropdownButtonFormField<String?>(
             initialValue: _releaseId,
             decoration: const InputDecoration(labelText: 'Release folder'),
@@ -69,6 +88,22 @@ class _AddManualScreenState extends State<AddManualScreen> {
                 DropdownMenuItem(value: r.id, child: Text(r.name)),
             ],
             onChanged: (v) => setState(() => _releaseId = v),
+          ),
+          const SizedBox(height: 16),
+          CardCategoryFields(
+            category: _category(state),
+            idController: _numberController,
+            nameController: _nameController,
+            language: _language,
+            onLanguageChanged: (v) => setState(() => _language = v),
+            rarity: _rarity,
+            onRarityChanged: (v) => setState(() => _rarity = v),
+            kind: _kind,
+            onKindChanged: (v) => setState(() => _kind = v),
+            color: _color,
+            onColorChanged: (v) => setState(() => _color = v),
+            type: _type,
+            onTypeChanged: (v) => setState(() => _type = v),
           ),
           const SizedBox(height: 16),
           Row(

@@ -28,6 +28,17 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Pinned explicitly so every APK always bundles native libs (incl.
+        // libflutter.so) for both real devices and emulators, regardless of
+        // which single-ABI `-Ptarget-platform` a debug `flutter run`/`flutter
+        // attach` invocation last cached in android/local.properties. Without
+        // this, Gradle falls back to that cached target-platform's ABI only —
+        // e.g. x86_64 from the last emulator run — which is why a physical
+        // arm64-v8a device failed with ReLinker's MissingLibraryException.
+        ndk {
+            abiFilters += setOf("armeabi-v7a", "arm64-v8a", "x86_64")
+        }
     }
 
     buildTypes {

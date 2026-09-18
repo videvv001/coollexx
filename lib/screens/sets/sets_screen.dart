@@ -113,6 +113,7 @@ class _SetsScreenState extends State<SetsScreen> {
               ),
               const SizedBox(height: 12),
               SegmentedButton<_SetSort>(
+                showSelectedIcon: false,
                 segments: const [
                   ButtonSegment(
                     value: _SetSort.completion,

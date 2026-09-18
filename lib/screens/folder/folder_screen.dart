@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../models/sub_folder.dart';
 import '../../models/tcg_card.dart';
 import '../../state/app_state.dart';
 import '../../widgets/photo_placeholder.dart';
+import '../../data/photo_store.dart';
 import '../add_manual/add_manual_screen.dart';
 import '../capture/capture_screen.dart';
 import '../card_detail/card_detail_screen.dart';
+import '../shared/photo_editor_screen.dart';
+import '../shared/photo_source_sheet.dart';
 
 enum _ViewMode { grid, list }
 
@@ -21,39 +23,9 @@ class FolderScreen extends StatefulWidget {
 }
 
 class _FolderScreenState extends State<FolderScreen> {
-  String? _subFolderId; // null = "All"
   _ViewMode _view = _ViewMode.grid;
   bool _selectMode = false;
   final Set<String> _selected = {};
-
-  Future<void> _newSubFolder(AppState state) async {
-    final controller = TextEditingController();
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('New sub-folder'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: 'e.g. Holos'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('Create'),
-          ),
-        ],
-      ),
-    );
-    if (name != null && name.isNotEmpty) {
-      await state.createSubFolder(widget.releaseId, name);
-      setState(() {});
-    }
-  }
 
   Future<void> _renameRelease(AppState state) async {
     final release = await state.collection.release(widget.releaseId);
@@ -84,14 +56,64 @@ class _FolderScreenState extends State<FolderScreen> {
     }
   }
 
+  Future<bool?> _pickCoverShape() {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Cover shape'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Landscape'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Portrait'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _setCoverPhoto(AppState state) async {
+    final release = await state.collection.release(widget.releaseId);
+    if (release == null || !mounted) return;
+    final cards = await state.collection.cardsInRelease(widget.releaseId);
+    if (!mounted) return;
+    final sourcePath = await pickPhotoSource(
+      context,
+      allowExistingCardPhoto: true,
+      releaseCards: cards,
+    );
+    if (sourcePath == null || !mounted) return;
+    final portrait = await _pickCoverShape();
+    if (portrait == null || !mounted) return;
+    final savedPath = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PhotoEditorScreen(
+          sourcePath: sourcePath,
+          aspectRatio: portrait ? 5 / 7 : 4 / 3,
+          title: 'Cover photo',
+        ),
+      ),
+    );
+    if (savedPath == null) return;
+    final oldPath = release.coverPhotoPath;
+    await state.collection.updateRelease(
+      release.copyWith(coverPhotoPath: savedPath, coverPortrait: portrait),
+    );
+    if (oldPath != null) await PhotoStore.instance.delete(oldPath);
+    await state.refresh();
+    if (mounted) setState(() {});
+  }
+
   Future<void> _deleteRelease(AppState state) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete release?'),
-        content: const Text(
-          'Cards in this release become unsorted; sub-folders are removed.',
-        ),
+        content: const Text('Cards in this release become unsorted.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -131,11 +153,7 @@ class _FolderScreenState extends State<FolderScreen> {
       ),
     );
     if (release != null) {
-      await state.moveCards(
-        _selected.toList(),
-        releaseId: release,
-        clearSubFolder: true,
-      );
+      await state.moveCards(_selected.toList(), releaseId: release);
       setState(() {
         _selected.clear();
         _selectMode = false;
@@ -223,21 +241,28 @@ class _FolderScreenState extends State<FolderScreen> {
       _selectMode = false;
     });
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Binned ${removed.length} cards'),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () async {
-            for (final card in removed) {
-              await state.collection.createCard(card);
-            }
-            await state.refresh();
-            if (mounted) setState(() {});
-          },
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('Binned ${removed.length} cards'),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () async {
+              for (final card in removed) {
+                await state.collection.createCard(card);
+              }
+              await state.refresh();
+              if (mounted) setState(() {});
+            },
+          ),
         ),
-      ),
-    );
+      );
+  }
+
+  Future<void> _toggleFavorite(AppState state, TcgCard card) async {
+    await state.updateCard(card.copyWith(isFavorite: !card.isFavorite));
+    if (mounted) setState(() {});
   }
 
   @override
@@ -247,10 +272,7 @@ class _FolderScreenState extends State<FolderScreen> {
     return FutureBuilder(
       future: Future.wait([
         state.collection.release(widget.releaseId),
-        state.collection.subFoldersFor(widget.releaseId),
-        _subFolderId == null
-            ? state.collection.cardsInRelease(widget.releaseId)
-            : state.collection.cardsInSubFolder(_subFolderId!),
+        state.collection.cardsInRelease(widget.releaseId),
       ]),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
@@ -259,15 +281,10 @@ class _FolderScreenState extends State<FolderScreen> {
           );
         }
         final release = snapshot.data![0] as dynamic;
-        final subFolders = snapshot.data![1] as List<SubFolder>;
-        final cards = snapshot.data![2] as List<TcgCard>;
+        final cards = snapshot.data![1] as List<TcgCard>;
         if (release == null) {
           return const Scaffold(body: Center(child: Text('Release not found')));
         }
-
-        final title = _subFolderId == null
-            ? release.name as String
-            : subFolders.firstWhere((s) => s.id == _subFolderId).name;
 
         return Scaffold(
           appBar: AppBar(
@@ -280,20 +297,9 @@ class _FolderScreenState extends State<FolderScreen> {
                     }),
                   )
                 : const BackButton(),
-            title: _selectMode
-                ? Text('${_selected.length} selected')
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (_subFolderId != null)
-                        Text(
-                          '${release.name} ›',
-                          style: Theme.of(context).textTheme.labelSmall,
-                        ),
-                      Text(title),
-                    ],
-                  ),
+            title: Text(
+              _selectMode ? '${_selected.length} selected' : release.name as String,
+            ),
             actions: _selectMode
                 ? [
                     TextButton(
@@ -322,12 +328,23 @@ class _FolderScreenState extends State<FolderScreen> {
                     ),
                     PopupMenuButton<String>(
                       onSelected: (choice) {
+                        if (choice == 'cover') _setCoverPhoto(state);
                         if (choice == 'rename') _renameRelease(state);
                         if (choice == 'delete') _deleteRelease(state);
                       },
-                      itemBuilder: (context) => const [
-                        PopupMenuItem(value: 'rename', child: Text('Rename')),
-                        PopupMenuItem(value: 'delete', child: Text('Delete')),
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                          value: 'cover',
+                          child: Text('Set cover photo'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'rename',
+                          child: Text('Rename'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: Text('Delete'),
+                        ),
                       ],
                     ),
                   ],
@@ -373,103 +390,67 @@ class _FolderScreenState extends State<FolderScreen> {
                   ),
                 )
               : null,
-          body: Column(
-            children: [
-              SizedBox(
-                height: 48,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
+          body: cards.isEmpty
+              ? _EmptyFolder(releaseId: widget.releaseId)
+              : _view == _ViewMode.grid
+              ? GridView.builder(
+                  padding: const EdgeInsets.all(12),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                    mainAxisSpacing: 8,
+                    crossAxisSpacing: 8,
+                    childAspectRatio: 5 / 7,
                   ),
-                  children: [
-                    ChoiceChip(
-                      label: Text('All ${cards.length}'),
-                      selected: _subFolderId == null,
-                      onSelected: (_) => setState(() => _subFolderId = null),
-                    ),
-                    const SizedBox(width: 8),
-                    for (final sf in subFolders) ...[
-                      FutureBuilder<List<TcgCard>>(
-                        future: state.collection.cardsInSubFolder(sf.id),
-                        builder: (context, snap) => ChoiceChip(
-                          label: Text('${sf.name} ${snap.data?.length ?? ''}'),
-                          selected: _subFolderId == sf.id,
-                          onSelected: (_) =>
-                              setState(() => _subFolderId = sf.id),
+                  itemCount: cards.length,
+                  itemBuilder: (context, index) => _CardTile(
+                    card: cards[index],
+                    selectMode: _selectMode,
+                    selected: _selected.contains(cards[index].id),
+                    onTap: () => _onCardTap(cards[index]),
+                    onLongPress: () => setState(() {
+                      _selectMode = true;
+                      _selected.add(cards[index].id);
+                    }),
+                    onToggleFavorite: () => _toggleFavorite(state, cards[index]),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: cards.length,
+                  itemBuilder: (context, index) {
+                    final card = cards[index];
+                    return ListTile(
+                      leading: SizedBox(
+                        width: 40,
+                        child: PhotoPlaceholder(
+                          path: card.thumbnailPath,
+                          dashed: !card.hasPhoto,
                         ),
                       ),
-                      const SizedBox(width: 8),
-                    ],
-                    ActionChip(
-                      label: const Text('+'),
-                      onPressed: () => _newSubFolder(state),
-                    ),
-                  ],
+                      title: Text(card.isUntitled ? 'Untitled' : card.name!),
+                      subtitle: Text(
+                        [
+                          if (card.number != null) '#${card.number}',
+                          'x${card.copies}',
+                        ].join(' · '),
+                      ),
+                      selected: _selected.contains(card.id),
+                      onTap: () => _onCardTap(card),
+                      onLongPress: () => setState(() {
+                        _selectMode = true;
+                        _selected.add(card.id);
+                      }),
+                      trailing: IconButton(
+                        icon: Icon(
+                          card.isFavorite ? Icons.star : Icons.star_border,
+                          color: card.isFavorite
+                              ? Theme.of(context).colorScheme.primary
+                              : null,
+                        ),
+                        onPressed: () => _toggleFavorite(state, card),
+                      ),
+                    );
+                  },
                 ),
-              ),
-              Expanded(
-                child: cards.isEmpty
-                    ? _EmptyFolder(
-                        releaseId: widget.releaseId,
-                        onAddSubFolder: () => _newSubFolder(state),
-                      )
-                    : _view == _ViewMode.grid
-                    ? GridView.builder(
-                        padding: const EdgeInsets.all(12),
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 4,
-                              mainAxisSpacing: 8,
-                              crossAxisSpacing: 8,
-                              childAspectRatio: 5 / 7,
-                            ),
-                        itemCount: cards.length,
-                        itemBuilder: (context, index) => _CardTile(
-                          card: cards[index],
-                          selectMode: _selectMode,
-                          selected: _selected.contains(cards[index].id),
-                          onTap: () => _onCardTap(cards[index]),
-                          onLongPress: () => setState(() {
-                            _selectMode = true;
-                            _selected.add(cards[index].id);
-                          }),
-                        ),
-                      )
-                    : ListView.builder(
-                        itemCount: cards.length,
-                        itemBuilder: (context, index) {
-                          final card = cards[index];
-                          return ListTile(
-                            leading: SizedBox(
-                              width: 40,
-                              child: PhotoPlaceholder(
-                                path: card.thumbnailPath,
-                                dashed: !card.hasPhoto,
-                              ),
-                            ),
-                            title: Text(
-                              card.isUntitled ? 'Untitled' : card.name!,
-                            ),
-                            subtitle: Text(
-                              [
-                                if (card.number != null) '#${card.number}',
-                                'x${card.copies}',
-                              ].join(' · '),
-                            ),
-                            selected: _selected.contains(card.id),
-                            onTap: () => _onCardTap(card),
-                            onLongPress: () => setState(() {
-                              _selectMode = true;
-                              _selected.add(card.id);
-                            }),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          ),
         );
       },
     );
@@ -500,6 +481,7 @@ class _CardTile extends StatelessWidget {
     required this.selected,
     required this.onTap,
     required this.onLongPress,
+    required this.onToggleFavorite,
   });
 
   final TcgCard card;
@@ -507,6 +489,7 @@ class _CardTile extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
+  final VoidCallback onToggleFavorite;
 
   @override
   Widget build(BuildContext context) {
@@ -523,6 +506,27 @@ class _CardTile extends StatelessWidget {
               borderRadius: 6,
             ),
           ),
+          if (!selectMode)
+            Positioned(
+              top: 4,
+              left: 4,
+              child: GestureDetector(
+                onTap: onToggleFavorite,
+                child: Container(
+                  width: 20,
+                  height: 20,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.black38,
+                  ),
+                  child: Icon(
+                    card.isFavorite ? Icons.star : Icons.star_border,
+                    size: 14,
+                    color: card.isFavorite ? Colors.amber : Colors.white,
+                  ),
+                ),
+              ),
+            ),
           if (selectMode)
             Positioned(
               top: 4,
@@ -558,10 +562,9 @@ class _CardTile extends StatelessWidget {
 }
 
 class _EmptyFolder extends StatelessWidget {
-  const _EmptyFolder({required this.releaseId, required this.onAddSubFolder});
+  const _EmptyFolder({required this.releaseId});
 
   final String releaseId;
-  final VoidCallback onAddSubFolder;
 
   @override
   Widget build(BuildContext context) {
@@ -590,11 +593,6 @@ class _EmptyFolder extends StatelessWidget {
             ),
             icon: const Icon(Icons.camera_alt),
             label: const Text('Scan into this release'),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton(
-            onPressed: onAddSubFolder,
-            child: const Text('Add a sub-folder'),
           ),
           const SizedBox(height: 8),
           TextButton(

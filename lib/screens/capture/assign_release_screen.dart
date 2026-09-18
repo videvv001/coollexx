@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../models/sub_folder.dart';
 import '../../state/app_state.dart';
 import 'capture_route.dart';
 
-/// 1a step 3 — Assign to release. Sub-folder is explicitly optional and
-/// defaults to none; unassigned shots simply stay in the unsorted tray if
-/// the user backs out here.
+/// 1a step 3 — Assign to release. Unassigned shots simply stay in the
+/// unsorted tray if the user backs out here.
 class AssignReleaseScreen extends StatefulWidget {
   const AssignReleaseScreen({
     super.key,
@@ -24,21 +22,11 @@ class AssignReleaseScreen extends StatefulWidget {
 
 class _AssignReleaseScreenState extends State<AssignReleaseScreen> {
   String? _releaseId;
-  String? _subFolderId;
-  List<SubFolder> _subFolders = [];
 
   @override
   void initState() {
     super.initState();
     _releaseId = widget.initialReleaseId;
-    if (_releaseId != null) _loadSubFolders();
-  }
-
-  Future<void> _loadSubFolders() {
-    final state = context.read<AppState>();
-    return state.collection.subFoldersFor(_releaseId!).then((v) {
-      if (mounted) setState(() => _subFolders = v);
-    });
   }
 
   Future<void> _newRelease(AppState state) async {
@@ -62,11 +50,7 @@ class _AssignReleaseScreenState extends State<AssignReleaseScreen> {
     );
     if (name != null && name.isNotEmpty) {
       final release = await state.createRelease(name);
-      setState(() {
-        _releaseId = release.id;
-        _subFolderId = null;
-        _subFolders = [];
-      });
+      setState(() => _releaseId = release.id);
     }
   }
 
@@ -75,8 +59,6 @@ class _AssignReleaseScreenState extends State<AssignReleaseScreen> {
       widget.cardIds,
       releaseId: _releaseId,
       clearRelease: _releaseId == null,
-      subFolderId: _subFolderId,
-      clearSubFolder: _subFolderId == null,
     );
     if (!mounted) return;
     Navigator.of(context).popUntil(ModalRoute.withName(captureRouteName));
@@ -95,13 +77,7 @@ class _AssignReleaseScreenState extends State<AssignReleaseScreen> {
       appBar: AppBar(title: Text('Assign ${widget.cardIds.length} cards')),
       body: RadioGroup<String>(
         groupValue: _releaseId,
-        onChanged: (v) {
-          setState(() {
-            _releaseId = v;
-            _subFolderId = null;
-          });
-          _loadSubFolders();
-        },
+        onChanged: (v) => setState(() => _releaseId = v),
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
@@ -115,30 +91,6 @@ class _AssignReleaseScreenState extends State<AssignReleaseScreen> {
               title: const Text('New release…'),
               onTap: () => _newRelease(state),
             ),
-            if (_releaseId != null) ...[
-              const Divider(height: 32),
-              Text(
-                'Sub-folder — optional',
-                style: Theme.of(context).textTheme.labelLarge,
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: [
-                  ChoiceChip(
-                    label: const Text('None'),
-                    selected: _subFolderId == null,
-                    onSelected: (_) => setState(() => _subFolderId = null),
-                  ),
-                  for (final sf in _subFolders)
-                    ChoiceChip(
-                      label: Text(sf.name),
-                      selected: _subFolderId == sf.id,
-                      onSelected: (_) => setState(() => _subFolderId = sf.id),
-                    ),
-                ],
-              ),
-            ],
           ],
         ),
       ),

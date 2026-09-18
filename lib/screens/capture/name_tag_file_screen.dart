@@ -3,9 +3,11 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../models/card_condition.dart';
-import '../../models/sub_folder.dart';
+import '../../models/card_language.dart';
+import '../../models/release_category.dart';
 import '../../models/tcg_card.dart';
 import '../../state/app_state.dart';
+import '../shared/card_category_fields.dart';
 import 'capture_route.dart';
 
 /// 1c step 3 — Name, tag, file. The end of the guided-scan path: unlike
@@ -34,8 +36,11 @@ class _NameTagFileScreenState extends State<NameTagFileScreen> {
   );
   final _paidController = TextEditingController();
   String? _releaseId;
-  String? _subFolderId;
-  List<SubFolder> _subFolders = [];
+  CardLanguage? _language;
+  String? _rarity;
+  String? _kind;
+  String? _color;
+  String? _type;
   CardCondition? _condition;
   int _copies = 1;
   DateTime? _datePaid;
@@ -46,14 +51,14 @@ class _NameTagFileScreenState extends State<NameTagFileScreen> {
   void initState() {
     super.initState();
     _releaseId = widget.boundReleaseId;
-    if (_releaseId != null) _loadSubFolders();
   }
 
-  Future<void> _loadSubFolders() {
-    final state = context.read<AppState>();
-    return state.collection.subFoldersFor(_releaseId!).then((v) {
-      if (mounted) setState(() => _subFolders = v);
-    });
+  ReleaseCategory _category(AppState state) {
+    if (_releaseId == null) return ReleaseCategory.others;
+    for (final r in state.releases) {
+      if (r.id == _releaseId) return r.category;
+    }
+    return ReleaseCategory.others;
   }
 
   Future<void> _pickDatePaid() async {
@@ -75,10 +80,14 @@ class _NameTagFileScreenState extends State<NameTagFileScreen> {
       number: _numberController.text.trim().isEmpty
           ? null
           : _numberController.text.trim(),
+      rarity: _rarity,
+      language: _language,
+      kind: _kind,
+      color: _color,
+      type: _type,
       condition: _condition,
       copies: _copies,
       releaseId: _releaseId,
-      subFolderId: _subFolderId,
       photoPaths: widget.photoPaths,
       pricePaid: double.tryParse(_paidController.text.trim()),
       datePaid: _datePaid,
@@ -110,12 +119,6 @@ class _NameTagFileScreenState extends State<NameTagFileScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          TextField(
-            controller: _nameController,
-            autofocus: true,
-            decoration: const InputDecoration(labelText: 'Name'),
-          ),
-          const SizedBox(height: 12),
           DropdownButtonFormField<String?>(
             initialValue: _releaseId,
             decoration: const InputDecoration(labelText: 'Release'),
@@ -127,44 +130,24 @@ class _NameTagFileScreenState extends State<NameTagFileScreen> {
               for (final r in state.releases)
                 DropdownMenuItem(value: r.id, child: Text(r.name)),
             ],
-            onChanged: (v) {
-              setState(() {
-                _releaseId = v;
-                _subFolderId = null;
-                _subFolders = [];
-              });
-              if (v != null) _loadSubFolders();
-            },
+            onChanged: (v) => setState(() => _releaseId = v),
           ),
           const SizedBox(height: 12),
-          TextField(
-            controller: _numberController,
-            decoration: const InputDecoration(labelText: 'Number'),
+          CardCategoryFields(
+            category: _category(state),
+            idController: _numberController,
+            nameController: _nameController,
+            language: _language,
+            onLanguageChanged: (v) => setState(() => _language = v),
+            rarity: _rarity,
+            onRarityChanged: (v) => setState(() => _rarity = v),
+            kind: _kind,
+            onKindChanged: (v) => setState(() => _kind = v),
+            color: _color,
+            onColorChanged: (v) => setState(() => _color = v),
+            type: _type,
+            onTypeChanged: (v) => setState(() => _type = v),
           ),
-          if (_releaseId != null) ...[
-            const SizedBox(height: 12),
-            Text(
-              'Sub-folder — optional, default "None"',
-              style: Theme.of(context).textTheme.labelLarge,
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              children: [
-                ChoiceChip(
-                  label: const Text('None'),
-                  selected: _subFolderId == null,
-                  onSelected: (_) => setState(() => _subFolderId = null),
-                ),
-                for (final sf in _subFolders)
-                  ChoiceChip(
-                    label: Text(sf.name),
-                    selected: _subFolderId == sf.id,
-                    onSelected: (_) => setState(() => _subFolderId = sf.id),
-                  ),
-              ],
-            ),
-          ],
           const SizedBox(height: 12),
           Text('Condition', style: Theme.of(context).textTheme.labelLarge),
           const SizedBox(height: 8),

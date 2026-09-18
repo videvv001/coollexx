@@ -3,15 +3,15 @@ import 'package:flutter/foundation.dart';
 import '../data/collection_repository.dart';
 import '../data/value_repository.dart';
 import '../models/release.dart';
+import '../models/release_category.dart';
 import '../models/tcg_card.dart';
 
 /// Cross-cutting app state: the release list, the unsorted-tray count, and
 /// a change counter screens can key their FutureBuilders on so they refetch
-/// after a write elsewhere. Per-screen data (a release's cards, a
-/// sub-folder's cards, search results) is queried directly from the
-/// repositories and paginated by the screen that needs it — collections run
-/// to thousands of cards, so nothing here loads a full card list into
-/// memory.
+/// after a write elsewhere. Per-screen data (a release's cards, search
+/// results) is queried directly from the repositories and paginated by the
+/// screen that needs it — collections run to thousands of cards, so nothing
+/// here loads a full card list into memory.
 class AppState extends ChangeNotifier {
   AppState({CollectionRepository? collection, ValueRepository? value})
     : collection = collection ?? CollectionRepository(),
@@ -73,27 +73,17 @@ class AppState extends ChangeNotifier {
     List<String> ids, {
     String? releaseId,
     bool clearRelease = false,
-    String? subFolderId,
-    bool clearSubFolder = true,
   }) async {
-    await collection.moveCards(
-      ids,
-      releaseId: releaseId,
-      clearRelease: clearRelease,
-      subFolderId: subFolderId,
-      clearSubFolder: clearSubFolder,
-    );
+    await collection.moveCards(ids, releaseId: releaseId, clearRelease: clearRelease);
     await refresh();
   }
 
-  Future<Release> createRelease(String name) async {
-    final release = await collection.createRelease(name);
+  Future<Release> createRelease(
+    String name, {
+    ReleaseCategory category = ReleaseCategory.others,
+  }) async {
+    final release = await collection.createRelease(name, category: category);
     await refresh();
     return release;
-  }
-
-  Future<void> createSubFolder(String releaseId, String name) async {
-    await collection.createSubFolder(releaseId, name);
-    notifyListeners();
   }
 }

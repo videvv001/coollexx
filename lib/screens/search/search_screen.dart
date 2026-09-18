@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/card_condition.dart';
+import '../../models/release_category.dart';
 import '../../models/tcg_card.dart';
 import '../../state/app_state.dart';
 import '../../widgets/photo_placeholder.dart';
@@ -9,16 +10,16 @@ import '../card_detail/card_detail_screen.dart';
 
 class SearchFilters {
   String? releaseId;
-  String? subFolderId;
   CardCondition? condition;
   bool onlyPhotographed = false;
+  ReleaseCategory? category;
   final Set<String> rarities = {};
 
   bool get isEmpty =>
       releaseId == null &&
-      subFolderId == null &&
       condition == null &&
       !onlyPhotographed &&
+      category == null &&
       rarities.isEmpty;
 }
 
@@ -51,9 +52,9 @@ class _SearchScreenState extends State<SearchScreen> {
     final results = await state.collection.search(
       query: _queryController.text,
       releaseId: _filters.releaseId,
-      subFolderId: _filters.subFolderId,
       conditionLabel: _filters.condition?.label,
       onlyPhotographed: _filters.onlyPhotographed,
+      category: _filters.category,
       rarities: _filters.rarities.isEmpty ? null : _filters.rarities.toList(),
     );
     if (!mounted) return;
@@ -161,9 +162,9 @@ class _FilterSheetState extends State<_FilterSheet> {
   Future<void> _recount() async {
     final results = await widget.state.collection.search(
       releaseId: widget.filters.releaseId,
-      subFolderId: widget.filters.subFolderId,
       conditionLabel: widget.filters.condition?.label,
       onlyPhotographed: widget.filters.onlyPhotographed,
+      category: widget.filters.category,
       rarities: widget.filters.rarities.isEmpty
           ? null
           : widget.filters.rarities.toList(),
@@ -201,9 +202,9 @@ class _FilterSheetState extends State<_FilterSheet> {
               TextButton(
                 onPressed: () => setState(() {
                   f.releaseId = null;
-                  f.subFolderId = null;
                   f.condition = null;
                   f.onlyPhotographed = false;
+                  f.category = null;
                   f.rarities.clear();
                   _recount();
                 }),
@@ -240,6 +241,31 @@ class _FilterSheetState extends State<_FilterSheet> {
             ],
             onChanged: (v) {
               setState(() => f.releaseId = v);
+              _recount();
+            },
+          ),
+          const SizedBox(height: 12),
+          Text('Category', style: Theme.of(context).textTheme.labelLarge),
+          SegmentedButton<ReleaseCategory?>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: null, label: Text('Any')),
+              ButtonSegment(
+                value: ReleaseCategory.pokemon,
+                label: Text('Pokémon'),
+              ),
+              ButtonSegment(
+                value: ReleaseCategory.onePiece,
+                label: Text('One Piece'),
+              ),
+              ButtonSegment(
+                value: ReleaseCategory.others,
+                label: Text('Others'),
+              ),
+            ],
+            selected: {f.category},
+            onSelectionChanged: (s) {
+              setState(() => f.category = s.first);
               _recount();
             },
           ),

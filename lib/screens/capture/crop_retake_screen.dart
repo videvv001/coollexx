@@ -1,22 +1,17 @@
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:image/image.dart' as img;
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
-import 'package:uuid/uuid.dart';
 
 import '../../data/photo_store.dart';
+import '../shared/photo_editor_screen.dart';
 import 'camera_controller_mixin.dart';
 import 'name_tag_file_screen.dart';
 
-/// 1c step 2 — Crop & retake. A detected photo with four draggable corner
-/// handles (implemented as an axis-aligned crop rect — the wireframe's
-/// corner handles without the added complexity of true perspective
-/// correction), Rotate / Straighten / Fill frame, and an optional second
-/// shot for the back of the card.
+/// 1c step 2 — Crop & retake. Delegates the actual crop/zoom/rotate to the
+/// shared `PhotoEditorScreen` (pushed as soon as this screen appears), then
+/// shows the existing "optional back-of-card shot + Next" step once the
+/// front photo comes back edited and saved.
 class CropRetakeScreen extends StatefulWidget {
   const CropRetakeScreen({
     super.key,
@@ -36,73 +31,33 @@ class CropRetakeScreen extends StatefulWidget {
 }
 
 class _CropRetakeScreenState extends State<CropRetakeScreen> {
-  Rect _cropRect = const Rect.fromLTWH(0.05, 0.05, 0.9, 0.9);
-  int _quarterTurns = 0;
-  double _straighten = 0;
+  String? _frontPath;
   String? _backPath;
   bool _processing = false;
 
-  void _dragCorner(String corner, Offset delta, Size boxSize) {
-    setState(() {
-      double left = _cropRect.left,
-          top = _cropRect.top,
-          right = _cropRect.right,
-          bottom = _cropRect.bottom;
-      final dx = delta.dx / boxSize.width;
-      final dy = delta.dy / boxSize.height;
-      switch (corner) {
-        case 'tl':
-          left += dx;
-          top += dy;
-          break;
-        case 'tr':
-          right += dx;
-          top += dy;
-          break;
-        case 'bl':
-          left += dx;
-          bottom += dy;
-          break;
-        case 'br':
-          right += dx;
-          bottom += dy;
-          break;
-      }
-      const minSize = 0.15;
-      left = left.clamp(0.0, right - minSize);
-      top = top.clamp(0.0, bottom - minSize);
-      right = right.clamp(left + minSize, 1.0);
-      bottom = bottom.clamp(top + minSize, 1.0);
-      _cropRect = Rect.fromLTRB(left, top, right, bottom);
-    });
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _editFront());
   }
 
-  Future<String> _process(String sourcePath) async {
-    final bytes = await File(sourcePath).readAsBytes();
-    var decoded = img.decodeImage(bytes);
-    if (decoded == null) return sourcePath;
-    if (_quarterTurns != 0) {
-      decoded = img.copyRotate(decoded, angle: 90.0 * _quarterTurns);
-    }
-    if (_straighten != 0) {
-      decoded = img.copyRotate(decoded, angle: _straighten);
-    }
-    final x = (_cropRect.left * decoded.width).round();
-    final y = (_cropRect.top * decoded.height).round();
-    final w = (_cropRect.width * decoded.width).round();
-    final h = (_cropRect.height * decoded.height).round();
-    final cropped = img.copyCrop(
-      decoded,
-      x: x,
-      y: y,
-      width: math.max(1, w),
-      height: math.max(1, h),
+  Future<void> _editFront() async {
+    final saved = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PhotoEditorScreen(
+          sourcePath: widget.photoPath,
+          aspectRatio: 5 / 7,
+          title: 'Crop · ${widget.side}',
+        ),
+      ),
     );
-
-    final dir = await getTemporaryDirectory();
-    final outFile = File(p.join(dir.path, '${const Uuid().v4()}.jpg'));
-    await outFile.writeAsBytes(img.encodeJpg(cropped, quality: 90));
-    return PhotoStore.instance.save(outFile);
+    if (!mounted) return;
+    if (saved == null) {
+      Navigator.pop(context);
+      return;
+    }
+    setState(() => _frontPath = saved);
   }
 
   Future<void> _captureBack() async {
@@ -115,7 +70,6 @@ class _CropRetakeScreenState extends State<CropRetakeScreen> {
 
   Future<void> _next() async {
     setState(() => _processing = true);
-    final frontPath = await _process(widget.photoPath);
     String? backPath;
     if (_backPath != null) {
       backPath = await PhotoStore.instance.save(File(_backPath!));
@@ -126,7 +80,7 @@ class _CropRetakeScreenState extends State<CropRetakeScreen> {
       context,
       MaterialPageRoute(
         builder: (_) => NameTagFileScreen(
-          photoPaths: [frontPath, if (backPath != null) backPath],
+          photoPaths: [_frontPath!, if (backPath != null) backPath],
           boundReleaseId: widget.boundReleaseId,
           boundSetSlotNumber: widget.boundSetSlotNumber,
         ),
@@ -136,6 +90,12 @@ class _CropRetakeScreenState extends State<CropRetakeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_frontPath == null) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(child: CircularProgressIndicator(color: Colors.white)),
+      );
+    }
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -149,73 +109,20 @@ class _CropRetakeScreenState extends State<CropRetakeScreen> {
             child: Center(
               child: AspectRatio(
                 aspectRatio: 5 / 7,
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final boxSize = Size(
-                      constraints.maxWidth,
-                      constraints.maxHeight,
-                    );
-                    return Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        Image.file(File(widget.photoPath), fit: BoxFit.cover),
-                        Positioned(
-                          left: _cropRect.left * boxSize.width,
-                          top: _cropRect.top * boxSize.height,
-                          width: _cropRect.width * boxSize.width,
-                          height: _cropRect.height * boxSize.height,
-                          child: IgnorePointer(
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                border: Border.all(
-                                  color: Colors.white,
-                                  width: 2,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        for (final corner in ['tl', 'tr', 'bl', 'br'])
-                          _handle(corner, boxSize),
-                      ],
-                    );
-                  },
-                ),
+                child: Image.file(File(_frontPath!), fit: BoxFit.cover),
               ),
             ),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 TextButton.icon(
-                  onPressed: () =>
-                      setState(() => _quarterTurns = (_quarterTurns + 1) % 4),
-                  icon: const Icon(
-                    Icons.rotate_90_degrees_ccw,
-                    color: Colors.white,
-                  ),
+                  onPressed: _editFront,
+                  icon: const Icon(Icons.crop, color: Colors.white),
                   label: const Text(
-                    'Rotate',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                ),
-                TextButton.icon(
-                  onPressed: () => _showStraighten(context),
-                  icon: const Icon(Icons.straighten, color: Colors.white),
-                  label: const Text(
-                    'Straighten',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                ),
-                TextButton.icon(
-                  onPressed: () => setState(
-                    () => _cropRect = const Rect.fromLTWH(0, 0, 1, 1),
-                  ),
-                  icon: const Icon(Icons.crop_free, color: Colors.white),
-                  label: const Text(
-                    'Fill frame',
+                    'Re-edit',
                     style: TextStyle(color: Colors.white),
                   ),
                 ),
@@ -229,7 +136,7 @@ class _CropRetakeScreenState extends State<CropRetakeScreen> {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(6),
                   child: Image.file(
-                    File(widget.photoPath),
+                    File(_frontPath!),
                     width: 48,
                     height: 64,
                     fit: BoxFit.cover,
@@ -276,56 +183,6 @@ class _CropRetakeScreenState extends State<CropRetakeScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  void _showStraighten(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setSheetState) => Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Straighten',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              Slider(
-                value: _straighten,
-                min: -15,
-                max: 15,
-                onChanged: (v) {
-                  setSheetState(() => _straighten = v);
-                  setState(() {});
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _handle(String corner, Size boxSize) {
-    final dx = corner.contains('l') ? _cropRect.left : _cropRect.right;
-    final dy = corner.contains('t') ? _cropRect.top : _cropRect.bottom;
-    return Positioned(
-      left: dx * boxSize.width - 12,
-      top: dy * boxSize.height - 12,
-      child: GestureDetector(
-        onPanUpdate: (details) => _dragCorner(corner, details.delta, boxSize),
-        child: Container(
-          width: 24,
-          height: 24,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.black26),
-          ),
-        ),
       ),
     );
   }
@@ -396,7 +253,12 @@ class _QuickShotScreenState extends State<_QuickShotScreen>
                     ),
                   )
                 : cameraReady
-                ? CameraPreview(cameraController!)
+                ? Center(
+                    child: AspectRatio(
+                      aspectRatio: 1 / cameraController!.value.aspectRatio,
+                      child: CameraPreview(cameraController!),
+                    ),
+                  )
                 : const Center(
                     child: CircularProgressIndicator(color: Colors.white),
                   ),

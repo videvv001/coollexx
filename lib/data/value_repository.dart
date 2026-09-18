@@ -1,10 +1,37 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
+import '../models/value_bucket.dart';
 import '../models/value_entry.dart';
+import '../utils/formatting.dart';
 import 'app_database.dart';
 
 enum ValueRange { day, week, month, year }
+
+/// Rolling-window width backing each range, in days — day/week match their
+/// literal names; month/year reuse the same 30/365-day approximation the
+/// range picker has always used rather than introducing calendar-boundary
+/// math (leap years, variable month lengths) nothing else in the app has.
+const valueRangeUnitDays = {
+  ValueRange.day: 1,
+  ValueRange.week: 7,
+  ValueRange.month: 30,
+  ValueRange.year: 365,
+};
+
+const valueRangeCountOptions = {
+  ValueRange.day: [7, 15, 30],
+  ValueRange.week: [4, 8, 12],
+  ValueRange.month: [4, 8, 12],
+  ValueRange.year: [4, 8, 12],
+};
+
+const valueRangeDefaultCount = {
+  ValueRange.day: 7,
+  ValueRange.week: 4,
+  ValueRange.month: 4,
+  ValueRange.year: 4,
+};
 
 class ValueRepository {
   ValueRepository({Database Function()? dbOverride}) : _dbOverride = dbOverride;
@@ -87,31 +114,41 @@ class ValueRepository {
     return map;
   }
 
-  /// Windows the sparse series to a range. Entries are returned in date
-  /// order; callers connect them with straight segments and must never
-  /// interpolate or extrapolate past the last real entry.
-  List<ValueEntry> windowed(
+  /// Buckets the sparse series into `count` fixed-width windows of
+  /// `range`'s unit size, oldest first, ending today. Each bucket's amount
+  /// is the mean of whatever entries fall inside it, or `null` if none —
+  /// callers must render a null bucket as a gap, never interpolated or
+  /// extrapolated, same invariant the old single-window `windowed()` had.
+  List<ValueBucket> buckets(
     List<ValueEntry> series,
-    ValueRange range, {
+    ValueRange range,
+    int count, {
     DateTime? now,
   }) {
     final today = now ?? DateTime.now();
-    late DateTime start;
-    switch (range) {
-      case ValueRange.day:
-        start = today.subtract(const Duration(days: 1));
-        break;
-      case ValueRange.week:
-        start = today.subtract(const Duration(days: 7));
-        break;
-      case ValueRange.month:
-        start = today.subtract(const Duration(days: 30));
-        break;
-      case ValueRange.year:
-        start = today.subtract(const Duration(days: 365));
-        break;
+    final unitDays = valueRangeUnitDays[range]!;
+    final result = <ValueBucket>[];
+    for (var i = count - 1; i >= 0; i--) {
+      final end = today.subtract(Duration(days: unitDays * i));
+      final start = end.subtract(Duration(days: unitDays));
+      final inBucket = series.where(
+        (e) => e.date.isAfter(start) && !e.date.isAfter(end),
+      );
+      final amount = inBucket.isEmpty
+          ? null
+          : inBucket.fold<double>(0, (sum, e) => sum + e.amount) /
+                inBucket.length;
+      result.add(
+        ValueBucket(
+          label: range == ValueRange.year
+              ? '${start.year}'
+              : formatShortDate(start),
+          periodStart: start,
+          amount: amount,
+        ),
+      );
     }
-    return series.where((e) => !e.date.isBefore(start)).toList();
+    return result;
   }
 
   /// Delta between the latest entry and the nearest entry on or before

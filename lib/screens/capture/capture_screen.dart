@@ -7,6 +7,7 @@ import 'batch_triage_screen.dart';
 import 'camera_controller_mixin.dart';
 import 'capture_route.dart';
 import 'crop_retake_screen.dart';
+import 'photo_preview_screen.dart';
 
 enum CaptureMode { burst, guided }
 
@@ -171,15 +172,24 @@ class _CaptureScreenState extends State<CaptureScreen>
                   ? const Center(
                       child: CircularProgressIndicator(color: Colors.white),
                     )
-                  : Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        CameraPreview(cameraController!),
-                        if (_gridOverlay) const _GridOverlay(),
-                        _mode == CaptureMode.burst
-                            ? _CardGuide(hint: 'Keep shooting')
-                            : _GuidedGuide(auto: _autoShutter),
-                      ],
+                  : Center(
+                      // A bounded AspectRatio here — matching the camera's own
+                      // native ratio — so the inner Stack.expand sizes the
+                      // preview to that box instead of stretching it to fill
+                      // whatever space is left in the Column, which distorts it.
+                      child: AspectRatio(
+                        aspectRatio: 1 / cameraController!.value.aspectRatio,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            CameraPreview(cameraController!),
+                            if (_gridOverlay) const _GridOverlay(),
+                            _mode == CaptureMode.burst
+                                ? _CardGuide(hint: 'Keep shooting')
+                                : _GuidedGuide(auto: _autoShutter),
+                          ],
+                        ),
+                      ),
                     ),
             ),
             if (_mode == CaptureMode.burst)
@@ -190,6 +200,10 @@ class _CaptureScreenState extends State<CaptureScreen>
                 onShutter: _onBurstShutter,
                 onReview: _shotPaths.isEmpty ? null : _reviewBurst,
                 recentPaths: _shotPaths.reversed.take(6).toList(),
+                onPathEdited: (oldPath, newPath) => setState(() {
+                  final i = _shotPaths.indexOf(oldPath);
+                  if (i != -1) _shotPaths[i] = newPath;
+                }),
               )
             else
               _GuidedControls(
@@ -415,6 +429,7 @@ class _BurstControls extends StatelessWidget {
     required this.onShutter,
     required this.onReview,
     required this.recentPaths,
+    required this.onPathEdited,
   });
 
   final bool continuous;
@@ -423,6 +438,7 @@ class _BurstControls extends StatelessWidget {
   final VoidCallback onShutter;
   final VoidCallback? onReview;
   final List<String> recentPaths;
+  final void Function(String oldPath, String newPath) onPathEdited;
 
   @override
   Widget build(BuildContext context) {
@@ -459,14 +475,31 @@ class _BurstControls extends StatelessWidget {
                                 for (final path in recentPaths)
                                   Padding(
                                     padding: const EdgeInsets.only(right: 4),
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(4),
-                                      child: Image.file(
-                                        File(path),
-                                        width: 32,
-                                        height: 40,
-                                        fit: BoxFit.cover,
-                                        cacheWidth: 64,
+                                    child: GestureDetector(
+                                      onTap: () async {
+                                        final edited =
+                                            await Navigator.push<String>(
+                                              context,
+                                              MaterialPageRoute(
+                                                builder: (_) =>
+                                                    PhotoPreviewScreen(
+                                                      path: path,
+                                                    ),
+                                              ),
+                                            );
+                                        if (edited != null) {
+                                          onPathEdited(path, edited);
+                                        }
+                                      },
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Image.file(
+                                          File(path),
+                                          width: 32,
+                                          height: 40,
+                                          fit: BoxFit.cover,
+                                          cacheWidth: 64,
+                                        ),
                                       ),
                                     ),
                                   ),

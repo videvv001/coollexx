@@ -89,26 +89,36 @@ class _AppShellState extends State<AppShell> {
           index: _index,
           children: List.generate(4, _buildTabNavigator),
         ),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: _index,
-          onDestinationSelected: (i) {
-            if (i == _index) {
-              _navigatorKeys[i].currentState?.popUntil((r) => r.isFirst);
-            } else {
-              setState(() {
-                _index = i;
-                _visited.add(i);
-              });
-            }
-          },
-          destinations: [
-            for (final tab in _tabs)
-              NavigationDestination(
-                icon: Icon(tab.icon),
-                selectedIcon: Icon(tab.selectedIcon),
-                label: tab.label,
+        bottomNavigationBar: DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border(
+              top: BorderSide(
+                color: Theme.of(context).colorScheme.outlineVariant,
+                width: 0.5,
               ),
-          ],
+            ),
+          ),
+          child: NavigationBar(
+            selectedIndex: _index,
+            onDestinationSelected: (i) {
+              if (i == _index) {
+                _navigatorKeys[i].currentState?.popUntil((r) => r.isFirst);
+              } else {
+                setState(() {
+                  _index = i;
+                  _visited.add(i);
+                });
+              }
+            },
+            destinations: [
+              for (final tab in _tabs)
+                NavigationDestination(
+                  icon: Icon(tab.icon),
+                  selectedIcon: Icon(tab.selectedIcon),
+                  label: tab.label,
+                ),
+            ],
+          ),
         ),
       ),
     );
