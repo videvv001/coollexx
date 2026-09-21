@@ -2,11 +2,18 @@ import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../../data/photo_store.dart';
+import '../../models/capture_item.dart';
+import '../../models/tcg_card.dart';
+import '../../state/app_state.dart';
+import '../shared/unsaved_capture_dialog.dart';
 import 'batch_triage_screen.dart';
 import 'camera_controller_mixin.dart';
 import 'capture_route.dart';
 import 'crop_retake_screen.dart';
+import 'live_framing.dart';
 import 'photo_preview_screen.dart';
 
 enum CaptureMode { burst, guided }
@@ -14,44 +21,119 @@ enum CaptureMode { burst, guided }
 /// The camera screen. `1a` (rapid burst) and `1c` (guided frame scan) are
 /// built as two modes of this one screen, per the design README's own
 /// recommendation for the safest reading of an undecided brief.
+///
+/// Burst shots are protected against navigation, app backgrounding, and
+/// process death: each one is recorded in a persistent `CaptureSession` the
+/// moment it's captured (see `_onBurstShutter`/`CaptureSessionRepository`),
+/// not just held in this State's `_items` list. `resumeSessionId` reopens
+/// an existing session — used when the app finds one left over from an
+/// interrupted run (see `AppShell`'s startup recovery check) — rather than
+/// starting a new one.
 class CaptureScreen extends StatefulWidget {
   const CaptureScreen({
     super.key,
     this.boundReleaseId,
     this.boundSetSlotNumber,
     this.startAtUnsortedTray = false,
+    this.resumeSessionId,
   });
 
   final String? boundReleaseId;
   final String? boundSetSlotNumber;
   final bool startAtUnsortedTray;
+  final String? resumeSessionId;
 
   @override
   State<CaptureScreen> createState() => _CaptureScreenState();
 }
 
 class _CaptureScreenState extends State<CaptureScreen>
-    with CameraControllerMixin {
-  late CaptureMode _mode = widget.boundSetSlotNumber != null
+    with CameraControllerMixin, WidgetsBindingObserver {
+  late CaptureMode _mode = widget.resumeSessionId != null
+      ? CaptureMode.burst
+      : widget.boundSetSlotNumber != null
       ? CaptureMode.guided
       : CaptureMode.burst;
   bool _burstContinuous = true;
   bool _autoShutter = true;
   FlashMode _flash = FlashMode.off;
-  final List<String> _shotPaths = [];
   final String _side = 'Front';
   bool _gridOverlay = false;
+
+  // Burst capture session (see class doc). `_items` mirrors what's already
+  // durably persisted via `_sessionId` — never the other way around: a shot
+  // is only appended here *after* `CaptureSessionRepository.addItem`
+  // succeeds, per the project's "don't display a count you haven't
+  // actually protected yet" requirement.
+  String? _sessionId;
+  final List<CaptureItem> _items = [];
+  bool _committing = false;
+
+  // Live framing: pinch-to-zoom uses real camera zoom (CameraControllerMixin
+  // .setZoom), so the sensor itself — not just the preview widget — is
+  // zoomed. The capture frame below is a *fixed* fraction of whatever the
+  // camera currently sees (see `captureFrameFraction`), so it needs no
+  // separate pan/position state: zoom handles magnification, the frame
+  // handles trimming the preview's native aspect ratio down to a card's.
+  // Both persist for the whole camera session and are only ever changed by
+  // an explicit pinch or Reset tap — never reset between shots — which is
+  // what lets burst capture reuse the same framing across many photos.
+  double? _zoomGestureStart;
+  bool _capturing = false;
+
+  void _onScaleStart(ScaleStartDetails details) {
+    _zoomGestureStart = currentZoom;
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails details) {
+    final start = _zoomGestureStart;
+    if (start == null) return;
+    setZoom(start * details.scale);
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     initCamera();
+    _resumeIfNeeded();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     disposeCamera();
     super.dispose();
+  }
+
+  /// App backgrounding (Home, task switch, an incoming call) is *not*
+  /// treated as "leaving the camera" — no confirmation, no discard. Every
+  /// shot is already safely persisted, so the only thing to do is release
+  /// the camera hardware while we're not visible and reacquire it on
+  /// return. The capture session itself is untouched either way.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      if (cameraController != null) setState(disposeCamera);
+    } else if (state == AppLifecycleState.resumed &&
+        cameraController == null &&
+        cameraError == null) {
+      initCamera();
+    }
+  }
+
+  Future<void> _resumeIfNeeded() async {
+    final sessionId = widget.resumeSessionId;
+    if (sessionId == null) return;
+    final items = await context.read<AppState>().captureSessions.items(
+      sessionId,
+    );
+    if (!mounted) return;
+    setState(() {
+      _sessionId = sessionId;
+      _items.addAll(items);
+    });
   }
 
   Future<void> _toggleFlash() async {
@@ -74,35 +156,142 @@ class _CaptureScreenState extends State<CaptureScreen>
     }
   }
 
-  Future<void> _onBurstShutter() async {
-    final file = await _takeShot();
-    if (file == null) return;
-    setState(() => _shotPaths.add(file.path));
+  /// Takes a shot and crops it to the same region the live capture frame
+  /// showed at the moment of capture (see `live_framing.dart`) — zoom is
+  /// already baked in by the camera itself, this just trims the preview's
+  /// native aspect ratio down to a card's. Guarded by `_capturing` so a
+  /// second tap can't start an overlapping native capture; the crop itself
+  /// runs off-thread, so this is normally sub-second.
+  Future<String?> _captureFramed() async {
+    if (_capturing) return null;
+    setState(() => _capturing = true);
+    try {
+      final file = await _takeShot();
+      if (file == null) return null;
+      return await cropToFraming(file.path, kCardAspect);
+    } finally {
+      if (mounted) setState(() => _capturing = false);
+    }
   }
 
-  void _reviewBurst() {
+  /// Captures a shot and — this is the fix for the data-loss this screen
+  /// used to be exposed to — immediately records it in the persistent
+  /// capture session *before* it's ever reflected in the on-screen count.
+  /// A session is created lazily on the very first successful shot rather
+  /// than when the screen opens, so backing out of an empty burst never
+  /// leaves a stray empty session behind.
+  Future<void> _onBurstShutter() async {
+    final path = await _captureFramed();
+    if (path == null || !mounted) return;
+    final state = context.read<AppState>();
+    try {
+      var sessionId = _sessionId;
+      if (sessionId == null) {
+        final session = await state.captureSessions.createSession(
+          targetReleaseId: widget.boundReleaseId,
+        );
+        sessionId = session.id;
+      }
+      final item = await state.captureSessions.addItem(sessionId, path);
+      if (!mounted) return;
+      setState(() {
+        _sessionId = sessionId;
+        _items.add(item);
+      });
+      state.setPendingCapture(
+        PendingCapture(sessionId: sessionId, count: _items.length),
+      );
+    } catch (_) {
+      // The photo file itself is fine (already written above) but couldn't
+      // be recorded in the session, so it can never be found again — clean
+      // it up rather than leaving an orphaned file, and don't count it:
+      // every previous capture stays exactly as it was.
+      await PhotoStore.instance.delete(path);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(content: Text("Couldn't save that photo — try again")),
+        );
+    }
+  }
+
+  /// Turns every pending item into a real collection entry (see
+  /// `CaptureSessionRepository.commit`) and clears the local session state.
+  /// Shared by "Done · review" and "Save & leave" — the only difference is
+  /// what the caller does with the result afterward.
+  Future<List<TcgCard>> _commitSession() async {
+    final sessionId = _sessionId;
+    if (sessionId == null) return const [];
+    final state = context.read<AppState>();
+    setState(() => _committing = true);
+    final cards = await state.captureSessions.commit(
+      state.collection,
+      sessionId,
+    );
+    await state.refresh();
+    if (!mounted) return cards;
+    state.setPendingCapture(null);
+    setState(() {
+      _committing = false;
+      _sessionId = null;
+      _items.clear();
+    });
+    return cards;
+  }
+
+  Future<void> _reviewBurst() async {
+    final cards = await _commitSession();
+    if (!mounted || cards.isEmpty) return;
     Navigator.push(
       context,
       MaterialPageRoute(
         settings: const RouteSettings(name: captureRouteName),
         builder: (_) => BatchTriageScreen(
-          shotPaths: List.of(_shotPaths),
+          cardIds: cards.map((c) => c.id).toList(),
           boundReleaseId: widget.boundReleaseId,
         ),
       ),
-    ).then((_) => setState(() => _shotPaths.clear()));
+    );
+  }
+
+  /// The interception point for "leaving the camera with unsaved photos" —
+  /// Android back and the close (X) button both route through this via
+  /// `PopScope`/`Navigator.maybePop`. Not used for app backgrounding; see
+  /// `didChangeAppLifecycleState`.
+  Future<bool> _resolveLeaveConfirmation() async {
+    final count = _items.length;
+    final action = await showUnsavedCaptureDialog(context, count: count);
+    if (!mounted) return false;
+    switch (action) {
+      case LeaveCaptureAction.continueCapturing:
+        return false;
+      case LeaveCaptureAction.discard:
+        final confirmed = await confirmDiscardCapture(context, count);
+        if (!confirmed || !mounted) return false;
+        final state = context.read<AppState>();
+        await state.captureSessions.discard(_sessionId!);
+        state.setPendingCapture(null);
+        setState(() {
+          _sessionId = null;
+          _items.clear();
+        });
+        return true;
+      case LeaveCaptureAction.saveAndLeave:
+        await _commitSession();
+        return true;
+    }
   }
 
   Future<void> _onGuidedShutter() async {
-    final file = await _takeShot();
-    if (file == null) return;
-    if (!mounted) return;
+    final path = await _captureFramed();
+    if (path == null || !mounted) return;
     Navigator.push(
       context,
       MaterialPageRoute(
         settings: const RouteSettings(name: captureRouteName),
         builder: (_) => CropRetakeScreen(
-          photoPath: file.path,
+          photoPath: path,
           side: _side,
           boundReleaseId: widget.boundReleaseId,
           boundSetSlotNumber: widget.boundSetSlotNumber,
@@ -115,107 +304,193 @@ class _CaptureScreenState extends State<CaptureScreen>
   Widget build(BuildContext context) {
     if (widget.startAtUnsortedTray) {
       return BatchTriageScreen(
-        shotPaths: const [],
+        cardIds: const [],
         boundReleaseId: widget.boundReleaseId,
         useUnsortedTray: true,
       );
     }
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                  const Spacer(),
-                  SegmentedButton<CaptureMode>(
-                    segments: const [
-                      ButtonSegment(
-                        value: CaptureMode.burst,
-                        label: Text('Quick burst'),
-                      ),
-                      ButtonSegment(
-                        value: CaptureMode.guided,
-                        label: Text('Guided scan'),
-                      ),
-                    ],
-                    selected: {_mode},
-                    onSelectionChanged: (s) => setState(() => _mode = s.first),
-                  ),
-                  const Spacer(),
-                  if (_mode == CaptureMode.burst)
+    // This screen can stay mounted-but-hidden behind the bottom nav bar's
+    // IndexedStack after the user switches tabs, and AppShell resolves an
+    // "unsaved photos" prompt entirely through AppState/the repository
+    // (see AppShell._resolvePendingCapture) without reaching into this
+    // widget. `watch` here is what notices that happened — on the next
+    // build, our local session no longer matches AppState's — so a shot
+    // taken after switching back doesn't try to save into an already
+    // committed/discarded session.
+    final pendingCapture = context.watch<AppState>().pendingCapture;
+    if (_sessionId != null && pendingCapture?.sessionId != _sessionId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          _sessionId = null;
+          _items.clear();
+        });
+      });
+    }
+
+    return PopScope(
+      // Blocks both the system back gesture/button *and* an imperative
+      // Navigator.pop aimed at this route (see AppShell's own root
+      // PopScope, which pops the active tab's nested Navigator on back —
+      // this is what actually intercepts that). `Navigator.maybePop` below
+      // routes the close button through the exact same check.
+      canPop: _items.isEmpty,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        final navigator = Navigator.of(context);
+        final proceed = await _resolveLeaveConfirmation();
+        if (!proceed || !mounted) return;
+        navigator.pop();
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Row(
+                  children: [
                     IconButton(
-                      icon: Icon(
-                        _flash == FlashMode.off
-                            ? Icons.flash_off
-                            : Icons.flash_on,
-                        color: Colors.white,
-                      ),
-                      onPressed: _toggleFlash,
-                    )
-                  else
-                    const SizedBox(width: 48),
-                ],
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.maybePop(context),
+                    ),
+                    const Spacer(),
+                    SegmentedButton<CaptureMode>(
+                      segments: const [
+                        ButtonSegment(
+                          value: CaptureMode.burst,
+                          label: Text('Quick burst'),
+                        ),
+                        ButtonSegment(
+                          value: CaptureMode.guided,
+                          label: Text('Guided scan'),
+                        ),
+                      ],
+                      selected: {_mode},
+                      onSelectionChanged: (s) =>
+                          setState(() => _mode = s.first),
+                    ),
+                    const Spacer(),
+                    if (_mode == CaptureMode.burst)
+                      IconButton(
+                        icon: Icon(
+                          _flash == FlashMode.off
+                              ? Icons.flash_off
+                              : Icons.flash_on,
+                          color: Colors.white,
+                        ),
+                        onPressed: _toggleFlash,
+                      )
+                    else
+                      const SizedBox(width: 48),
+                  ],
+                ),
               ),
-            ),
-            Expanded(
-              child: cameraError != null
-                  ? _CameraUnavailable(message: cameraError!)
-                  : !cameraReady
-                  ? const Center(
-                      child: CircularProgressIndicator(color: Colors.white),
-                    )
-                  : Center(
-                      // A bounded AspectRatio here — matching the camera's own
-                      // native ratio — so the inner Stack.expand sizes the
-                      // preview to that box instead of stretching it to fill
-                      // whatever space is left in the Column, which distorts it.
-                      child: AspectRatio(
-                        aspectRatio: 1 / cameraController!.value.aspectRatio,
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            CameraPreview(cameraController!),
-                            if (_gridOverlay) const _GridOverlay(),
-                            _mode == CaptureMode.burst
-                                ? _CardGuide(hint: 'Keep shooting')
-                                : _GuidedGuide(auto: _autoShutter),
-                          ],
+              Expanded(
+                child: cameraError != null
+                    ? _CameraUnavailable(message: cameraError!)
+                    : !cameraReady
+                    ? const Center(
+                        child: CircularProgressIndicator(color: Colors.white),
+                      )
+                    : Center(
+                        // A bounded AspectRatio here — matching the camera's own
+                        // native ratio — so the inner Stack.expand sizes the
+                        // preview to that box instead of stretching it to fill
+                        // whatever space is left in the Column, which distorts it.
+                        child: AspectRatio(
+                          aspectRatio: 1 / cameraController!.value.aspectRatio,
+                          child: GestureDetector(
+                            onScaleStart: _onScaleStart,
+                            onScaleUpdate: _onScaleUpdate,
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                CameraPreview(cameraController!),
+                                if (_gridOverlay) const _GridOverlay(),
+                                _mode == CaptureMode.burst
+                                    ? _CardGuide(
+                                        hint: 'Keep shooting',
+                                        frame: captureFrameFraction(
+                                          previewAspect:
+                                              1 /
+                                              cameraController!
+                                                  .value
+                                                  .aspectRatio,
+                                          targetAspect: kCardAspect,
+                                        ),
+                                      )
+                                    : _GuidedGuide(
+                                        auto: _autoShutter,
+                                        frame: captureFrameFraction(
+                                          previewAspect:
+                                              1 /
+                                              cameraController!
+                                                  .value
+                                                  .aspectRatio,
+                                          targetAspect: kCardAspect,
+                                        ),
+                                      ),
+                                _ZoomBadge(
+                                  zoom: currentZoom,
+                                  showReset: currentZoom > minZoomLevel + 0.01,
+                                  onReset: resetZoom,
+                                ),
+                                if (_capturing)
+                                  const ColoredBox(
+                                    color: Colors.black26,
+                                    child: Center(
+                                      child: CircularProgressIndicator(
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-            ),
-            if (_mode == CaptureMode.burst)
-              _BurstControls(
-                continuous: _burstContinuous,
-                onModeChanged: (v) => setState(() => _burstContinuous = v),
-                shotCount: _shotPaths.length,
-                onShutter: _onBurstShutter,
-                onReview: _shotPaths.isEmpty ? null : _reviewBurst,
-                recentPaths: _shotPaths.reversed.take(6).toList(),
-                onPathEdited: (oldPath, newPath) => setState(() {
-                  final i = _shotPaths.indexOf(oldPath);
-                  if (i != -1) _shotPaths[i] = newPath;
-                }),
-              )
-            else
-              _GuidedControls(
-                auto: _autoShutter,
-                onModeChanged: (v) => setState(() => _autoShutter = v),
-                side: _side,
-                gridOn: _gridOverlay,
-                onToggleGrid: () =>
-                    setState(() => _gridOverlay = !_gridOverlay),
-                onShutter: _onGuidedShutter,
               ),
-          ],
+              if (_mode == CaptureMode.burst)
+                _BurstControls(
+                  continuous: _burstContinuous,
+                  onModeChanged: (v) => setState(() => _burstContinuous = v),
+                  shotCount: _items.length,
+                  committing: _committing,
+                  onShutter: _committing ? null : _onBurstShutter,
+                  onReview: _items.isEmpty || _committing ? null : _reviewBurst,
+                  recentPaths: _items.reversed
+                      .map((i) => i.path)
+                      .take(6)
+                      .toList(),
+                  onPathEdited: (oldPath, newPath) async {
+                    final index = _items.indexWhere((i) => i.path == oldPath);
+                    if (index == -1) return;
+                    final item = _items[index];
+                    await context
+                        .read<AppState>()
+                        .captureSessions
+                        .updateItemPath(item, newPath);
+                    if (!mounted) return;
+                    setState(
+                      () => _items[index] = item.copyWith(path: newPath),
+                    );
+                  },
+                )
+              else
+                _GuidedControls(
+                  auto: _autoShutter,
+                  onModeChanged: (v) => setState(() => _autoShutter = v),
+                  side: _side,
+                  gridOn: _gridOverlay,
+                  onToggleGrid: () =>
+                      setState(() => _gridOverlay = !_gridOverlay),
+                  onShutter: _onGuidedShutter,
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -253,27 +528,100 @@ class _CameraUnavailable extends StatelessWidget {
   }
 }
 
+/// The live capture frame: a corner-bracket outline sized to exactly the
+/// [frame] fraction of the preview that `cropToFraming` keeps, so what's
+/// inside the brackets is what ends up in the saved photo. Centered via
+/// `Center` + `FractionallySizedBox` against the *whole* preview stack
+/// (not a nested aspect-ratio box), so `frame`'s width/height factors are
+/// exactly the crop fractions computed in `live_framing.dart`.
 class _CardGuide extends StatelessWidget {
-  const _CardGuide({required this.hint});
+  const _CardGuide({required this.hint, required this.frame});
 
   final String hint;
+  final ({double width, double height}) frame;
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          AspectRatio(
-            aspectRatio: 5 / 7,
-            child: FractionallySizedBox(
-              widthFactor: 0.7,
-              child: CustomPaint(painter: _CornerBracketsPainter()),
-            ),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Center(
+          child: FractionallySizedBox(
+            widthFactor: frame.width,
+            heightFactor: frame.height,
+            child: CustomPaint(painter: _CornerBracketsPainter()),
           ),
-          const SizedBox(height: 12),
-          Text(hint, style: const TextStyle(color: Colors.white70)),
-        ],
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 16,
+          child: Center(child: _HintChip(hint)),
+        ),
+      ],
+    );
+  }
+}
+
+class _HintChip extends StatelessWidget {
+  const _HintChip(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black54,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(text, style: const TextStyle(color: Colors.white)),
+    );
+  }
+}
+
+/// Zoom readout + optional Reset, overlaid top-right of the preview. Shows
+/// native camera zoom (`CameraControllerMixin.currentZoom`) — the same
+/// value that's actually applied to the sensor, not a preview-only scale.
+class _ZoomBadge extends StatelessWidget {
+  const _ZoomBadge({
+    required this.zoom,
+    required this.showReset,
+    required this.onReset,
+  });
+
+  final double zoom;
+  final bool showReset;
+  final VoidCallback onReset;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      top: 12,
+      right: 12,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${zoom.toStringAsFixed(1)}×',
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+            ),
+            if (showReset) ...[
+              const SizedBox(width: 4),
+              GestureDetector(
+                onTap: onReset,
+                child: const Icon(Icons.refresh, color: Colors.white, size: 16),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -306,9 +654,10 @@ class _CornerBracketsPainter extends CustomPainter {
 }
 
 class _GuidedGuide extends StatefulWidget {
-  const _GuidedGuide({required this.auto});
+  const _GuidedGuide({required this.auto, required this.frame});
 
   final bool auto;
+  final ({double width, double height}) frame;
 
   @override
   State<_GuidedGuide> createState() => _GuidedGuideState();
@@ -341,55 +690,50 @@ class _GuidedGuideState extends State<_GuidedGuide> {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          AspectRatio(
-            aspectRatio: 5 / 7,
-            child: FractionallySizedBox(
-              widthFactor: 0.72,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: Colors.white38,
-                        width: 1,
-                        style: BorderStyle.solid,
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Center(
+          child: FractionallySizedBox(
+            widthFactor: widget.frame.width,
+            heightFactor: widget.frame.height,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: Colors.white38,
+                      width: 1,
+                      style: BorderStyle.solid,
+                    ),
+                  ),
+                ),
+                Center(
+                  child: FractionallySizedBox(
+                    widthFactor: 0.94,
+                    heightFactor: 0.94,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white, width: 2),
                       ),
                     ),
                   ),
-                  Center(
-                    child: FractionallySizedBox(
-                      widthFactor: 0.94,
-                      heightFactor: 0.94,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.white, width: 2),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const Center(
-                    child: Icon(Icons.add, color: Colors.white38, size: 18),
-                  ),
-                ],
-              ),
+                ),
+                const Center(
+                  child: Icon(Icons.add, color: Colors.white38, size: 18),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.black54,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(_status, style: const TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 16,
+          child: Center(child: _HintChip(_status)),
+        ),
+      ],
     );
   }
 }
@@ -426,6 +770,7 @@ class _BurstControls extends StatelessWidget {
     required this.continuous,
     required this.onModeChanged,
     required this.shotCount,
+    required this.committing,
     required this.onShutter,
     required this.onReview,
     required this.recentPaths,
@@ -435,7 +780,8 @@ class _BurstControls extends StatelessWidget {
   final bool continuous;
   final ValueChanged<bool> onModeChanged;
   final int shotCount;
-  final VoidCallback onShutter;
+  final bool committing;
+  final VoidCallback? onShutter;
   final VoidCallback? onReview;
   final List<String> recentPaths;
   final void Function(String oldPath, String newPath) onPathEdited;
@@ -506,8 +852,12 @@ class _BurstControls extends StatelessWidget {
                               ],
                             ),
                           ),
+                          // "Draft saved", never "Saved" alone — these
+                          // shots are durably persisted but not yet part
+                          // of the collection, and the wording shouldn't
+                          // let that read as already committed.
                           Text(
-                            '$shotCount shot',
+                            '$shotCount captured · Draft saved',
                             style: const TextStyle(
                               color: Colors.white70,
                               fontSize: 11,
@@ -523,9 +873,11 @@ class _BurstControls extends StatelessWidget {
                     child: Container(
                       width: 64,
                       height: 64,
-                      decoration: const BoxDecoration(
+                      decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: Colors.white,
+                        color: onShutter == null
+                            ? Colors.white38
+                            : Colors.white,
                       ),
                     ),
                   ),
@@ -537,7 +889,13 @@ class _BurstControls extends StatelessWidget {
                   alignment: Alignment.centerRight,
                   child: FilledButton(
                     onPressed: onReview,
-                    child: Text('Done · review $shotCount'),
+                    child: committing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text('Done · review $shotCount'),
                   ),
                 ),
               ),

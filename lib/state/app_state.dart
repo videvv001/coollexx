@@ -1,10 +1,25 @@
 import 'package:flutter/foundation.dart';
 
+import '../data/capture_session_repository.dart';
 import '../data/collection_repository.dart';
 import '../data/value_repository.dart';
 import '../models/release.dart';
 import '../models/release_category.dart';
 import '../models/tcg_card.dart';
+
+/// The live burst session's id and how many photos it currently holds —
+/// kept on `AppState` (not just the camera screen's own State) so anything
+/// that can navigate away from the camera — the bottom nav bar, in
+/// particular — can tell there's unsaved work without reaching into that
+/// screen directly. The photos themselves are already durably persisted
+/// via `CaptureSessionRepository` the moment they're shot; this is purely a
+/// cheap, in-memory mirror of "is there currently something pending" for
+/// gating navigation, not the source of truth (that's the database).
+class PendingCapture {
+  const PendingCapture({required this.sessionId, required this.count});
+  final String sessionId;
+  final int count;
+}
 
 /// Cross-cutting app state: the release list, the unsorted-tray count, and
 /// a change counter screens can key their FutureBuilders on so they refetch
@@ -13,12 +28,17 @@ import '../models/tcg_card.dart';
 /// screen that needs it — collections run to thousands of cards, so nothing
 /// here loads a full card list into memory.
 class AppState extends ChangeNotifier {
-  AppState({CollectionRepository? collection, ValueRepository? value})
-    : collection = collection ?? CollectionRepository(),
-      value = value ?? ValueRepository();
+  AppState({
+    CollectionRepository? collection,
+    ValueRepository? value,
+    CaptureSessionRepository? captureSessions,
+  }) : collection = collection ?? CollectionRepository(),
+       value = value ?? ValueRepository(),
+       captureSessions = captureSessions ?? CaptureSessionRepository();
 
   final CollectionRepository collection;
   final ValueRepository value;
+  final CaptureSessionRepository captureSessions;
 
   List<Release> releases = [];
   int unsortedCount = 0;
@@ -26,6 +46,13 @@ class AppState extends ChangeNotifier {
   double totalValue = 0;
   bool _loaded = false;
   bool get loaded => _loaded;
+
+  PendingCapture? pendingCapture;
+
+  void setPendingCapture(PendingCapture? pending) {
+    pendingCapture = pending;
+    notifyListeners();
+  }
 
   Future<void> load() async {
     await refresh();
@@ -74,7 +101,11 @@ class AppState extends ChangeNotifier {
     String? releaseId,
     bool clearRelease = false,
   }) async {
-    await collection.moveCards(ids, releaseId: releaseId, clearRelease: clearRelease);
+    await collection.moveCards(
+      ids,
+      releaseId: releaseId,
+      clearRelease: clearRelease,
+    );
     await refresh();
   }
 

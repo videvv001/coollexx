@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../models/card_language.dart';
 import '../../models/release.dart';
 import '../../models/release_category.dart';
+import '../../models/tcg_card.dart';
 import '../../state/app_state.dart';
 import '../../widgets/photo_placeholder.dart';
 import '../capture/batch_triage_screen.dart';
@@ -50,6 +52,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  static const _uuid = Uuid();
   _SortMode _sort = _SortMode.recent;
   _DisplayMode _displayMode = _DisplayMode.landscape;
   bool _forceShowGrid = false;
@@ -196,7 +199,9 @@ class _HomeScreenState extends State<HomeScreen> {
       StateSetter setDialogState, {
       required bool portrait,
     }) async {
-      final otherUnset = portrait ? landscapePath == null : portraitPath == null;
+      final otherUnset = portrait
+          ? landscapePath == null
+          : portraitPath == null;
       final result = await pickCoverWithAutoFill(
         context,
         aspectRatio: portrait ? kPortraitCoverAspect : kLandscapeCoverAspect,
@@ -320,17 +325,6 @@ class _HomeScreenState extends State<HomeScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: Icon(
-                release.isFavorite ? Icons.star : Icons.star_border,
-              ),
-              title: Text(
-                release.isFavorite
-                    ? 'Remove from favorites'
-                    : 'Add to favorites',
-              ),
-              onTap: () => Navigator.pop(context, 'favorite'),
-            ),
-            ListTile(
               leading: const Icon(Icons.edit_outlined),
               title: const Text('Edit'),
               onTap: () => Navigator.pop(context, 'edit'),
@@ -346,9 +340,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (!mounted || action == null) return;
     switch (action) {
-      case 'favorite':
-        await _toggleFavorite(state, release);
-        break;
       case 'edit':
         await _editRelease(state, release);
         break;
@@ -379,12 +370,24 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _pickFromGallery(AppState state) async {
     final files = await ImagePicker().pickMultiImage();
     if (files.isEmpty || !mounted) return;
+    // Gallery picks are created immediately, not staged through a
+    // CaptureSession — there's no incremental in-progress shoot to protect
+    // here, the whole batch is already picked in one step.
+    final cardIds = <String>[];
+    for (final file in files) {
+      final card = await state.addCard(
+        TcgCard(
+          id: _uuid.v4(),
+          photoPaths: [file.path],
+          createdAt: DateTime.now(),
+        ),
+      );
+      cardIds.add(card.id);
+    }
+    if (!mounted) return;
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) =>
-            BatchTriageScreen(shotPaths: files.map((f) => f.path).toList()),
-      ),
+      MaterialPageRoute(builder: (_) => BatchTriageScreen(cardIds: cardIds)),
     );
   }
 
@@ -399,7 +402,10 @@ class _HomeScreenState extends State<HomeScreen> {
               ListTile(
                 title: Text(mode.label),
                 trailing: mode == _sort
-                    ? Icon(Icons.check, color: Theme.of(context).colorScheme.primary)
+                    ? Icon(
+                        Icons.check,
+                        color: Theme.of(context).colorScheme.primary,
+                      )
                     : null,
                 onTap: () => Navigator.pop(context, mode),
               ),
@@ -526,7 +532,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         onPressed: () => Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => const SearchScreen(openFilter: true),
+                            builder: (_) =>
+                                const SearchScreen(openFilter: true),
                           ),
                         ),
                         icon: const Icon(Icons.tune),
@@ -560,7 +567,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     // prevents cells from overlapping the row below.
                     const textBlockHeight = 46.0;
                     final itemWidth =
-                        (constraints.maxWidth - spacing * (crossAxisCount - 1)) /
+                        (constraints.maxWidth -
+                            spacing * (crossAxisCount - 1)) /
                         crossAxisCount;
                     final itemHeight =
                         itemWidth / _displayMode.coverAspect + textBlockHeight;
@@ -589,6 +597,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                           onLongPress: () => _openReleaseMenu(state, release),
+                          onToggleFavorite: () =>
+                              _toggleFavorite(state, release),
                         );
                       },
                     );
@@ -610,6 +620,7 @@ class _ReleaseTile extends StatelessWidget {
     required this.cardCount,
     required this.onTap,
     required this.onLongPress,
+    required this.onToggleFavorite,
   });
 
   final Release release;
@@ -617,6 +628,7 @@ class _ReleaseTile extends StatelessWidget {
   final int cardCount;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
+  final VoidCallback onToggleFavorite;
 
   @override
   Widget build(BuildContext context) {
@@ -637,24 +649,29 @@ class _ReleaseTile extends StatelessWidget {
                 icon: Icons.folder_outlined,
                 borderRadius: 12,
               ),
-              if (release.isFavorite)
-                Positioned(
-                  top: 6,
-                  right: 6,
+              // Nested GestureDetector so tapping the star doesn't also fire
+              // the InkWell's onTap and open the folder — the same pattern
+              // the collection-card favorite star uses in FolderScreen.
+              Positioned(
+                top: 4,
+                left: 4,
+                child: GestureDetector(
+                  onTap: onToggleFavorite,
                   child: Container(
-                    width: 22,
-                    height: 22,
+                    width: 20,
+                    height: 20,
                     decoration: const BoxDecoration(
                       shape: BoxShape.circle,
                       color: Colors.black38,
                     ),
-                    child: const Icon(
-                      Icons.star,
+                    child: Icon(
+                      release.isFavorite ? Icons.star : Icons.star_border,
                       size: 14,
-                      color: Colors.amber,
+                      color: release.isFavorite ? Colors.amber : Colors.white,
                     ),
                   ),
                 ),
+              ),
             ],
           ),
           const SizedBox(height: 8),

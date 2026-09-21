@@ -23,7 +23,7 @@ class AppDatabase {
     final path = p.join(dir.path, 'pokedex_tcg.db');
     return openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE releases (
@@ -79,6 +79,29 @@ class AppDatabase {
           'CREATE UNIQUE INDEX value_entries_card_date ON value_entries (cardId, date)',
         );
         await db.execute('CREATE INDEX cards_release ON cards (releaseId)');
+        await db.execute('''
+          CREATE TABLE capture_sessions (
+            id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            targetReleaseId TEXT,
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE capture_items (
+            id TEXT PRIMARY KEY,
+            sessionId TEXT NOT NULL,
+            path TEXT NOT NULL,
+            sequence INTEGER NOT NULL,
+            capturedAt TEXT NOT NULL,
+            committedCardId TEXT,
+            FOREIGN KEY (sessionId) REFERENCES capture_sessions (id) ON DELETE CASCADE
+          )
+        ''');
+        await db.execute(
+          'CREATE INDEX capture_items_session ON capture_items (sessionId)',
+        );
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -116,6 +139,31 @@ class AppDatabase {
         if (oldVersion < 5) {
           await db.execute(
             'ALTER TABLE releases ADD COLUMN isFavorite INTEGER NOT NULL DEFAULT 0',
+          );
+        }
+        if (oldVersion < 6) {
+          await db.execute('''
+            CREATE TABLE capture_sessions (
+              id TEXT PRIMARY KEY,
+              status TEXT NOT NULL,
+              targetReleaseId TEXT,
+              createdAt TEXT NOT NULL,
+              updatedAt TEXT NOT NULL
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE capture_items (
+              id TEXT PRIMARY KEY,
+              sessionId TEXT NOT NULL,
+              path TEXT NOT NULL,
+              sequence INTEGER NOT NULL,
+              capturedAt TEXT NOT NULL,
+              committedCardId TEXT,
+              FOREIGN KEY (sessionId) REFERENCES capture_sessions (id) ON DELETE CASCADE
+            )
+          ''');
+          await db.execute(
+            'CREATE INDEX capture_items_session ON capture_items (sessionId)',
           );
         }
       },

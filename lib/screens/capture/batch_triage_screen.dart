@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:uuid/uuid.dart';
 
 import '../../models/tcg_card.dart';
 import '../../state/app_state.dart';
@@ -13,15 +12,21 @@ import 'photo_preview_screen.dart';
 /// screen: without auto-match every shot lands here nameless either way, so
 /// a fresh burst session and a return visit to old unsorted photos are the
 /// same screen over the same underlying "no release yet" cards.
+///
+/// `cardIds` are already-real collection entries by the time this screen
+/// opens — for a fresh burst, the camera screen commits its capture
+/// session (creating them) before pushing here; see `CaptureScreen
+/// ._commitSession`. This screen never creates cards itself any more, only
+/// edits/bins the ones it's handed.
 class BatchTriageScreen extends StatefulWidget {
   const BatchTriageScreen({
     super.key,
-    required this.shotPaths,
+    required this.cardIds,
     this.boundReleaseId,
     this.useUnsortedTray = false,
   });
 
-  final List<String> shotPaths;
+  final List<String> cardIds;
   final String? boundReleaseId;
   final bool useUnsortedTray;
 
@@ -30,7 +35,6 @@ class BatchTriageScreen extends StatefulWidget {
 }
 
 class _BatchTriageScreenState extends State<BatchTriageScreen> {
-  static const _uuid = Uuid();
   List<TcgCard> _cards = [];
   bool _loading = true;
 
@@ -45,18 +49,12 @@ class _BatchTriageScreenState extends State<BatchTriageScreen> {
     if (widget.useUnsortedTray) {
       _cards = await state.collection.unsortedCards();
     } else {
-      final created = <TcgCard>[];
-      for (final path in widget.shotPaths) {
-        final card = await state.addCard(
-          TcgCard(
-            id: _uuid.v4(),
-            photoPaths: [path],
-            createdAt: DateTime.now(),
-          ),
-        );
-        created.add(card);
+      final loaded = <TcgCard>[];
+      for (final id in widget.cardIds) {
+        final card = await state.collection.card(id);
+        if (card != null) loaded.add(card);
       }
-      _cards = created;
+      _cards = loaded;
     }
     if (!mounted) return;
     setState(() => _loading = false);
@@ -221,10 +219,7 @@ class _BatchTriageScreenState extends State<BatchTriageScreen> {
                             );
                             if (edited == null) return;
                             final updated = card.copyWith(
-                              photoPaths: [
-                                edited,
-                                ...card.photoPaths.skip(1),
-                              ],
+                              photoPaths: [edited, ...card.photoPaths.skip(1)],
                             );
                             await state.updateCard(updated);
                             if (!mounted) return;

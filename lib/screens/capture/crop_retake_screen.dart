@@ -8,10 +8,12 @@ import '../shared/photo_editor_screen.dart';
 import 'camera_controller_mixin.dart';
 import 'name_tag_file_screen.dart';
 
-/// 1c step 2 — Crop & retake. Delegates the actual crop/zoom/rotate to the
-/// shared `PhotoEditorScreen` (pushed as soon as this screen appears), then
-/// shows the existing "optional back-of-card shot + Next" step once the
-/// front photo comes back edited and saved.
+/// 1c step 2 — Crop & retake. `photoPath` already comes pre-cropped to the
+/// live capture frame the user set in the camera (see `live_framing.dart`),
+/// so this no longer forces every shot through `PhotoEditorScreen` — that
+/// editor stays one tap away via "Re-edit" for anyone who wants to adjust
+/// further. Otherwise unchanged: still the "optional back-of-card shot +
+/// Next" step.
 class CropRetakeScreen extends StatefulWidget {
   const CropRetakeScreen({
     super.key,
@@ -38,25 +40,24 @@ class _CropRetakeScreenState extends State<CropRetakeScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _editFront());
+    _frontPath = widget.photoPath;
   }
 
+  // Optional further editing on top of the already-framed capture — not the
+  // primary path any more (see class doc), so backing out of the editor
+  // just keeps the current `_frontPath` instead of leaving this screen.
   Future<void> _editFront() async {
     final saved = await Navigator.push<String>(
       context,
       MaterialPageRoute(
         builder: (_) => PhotoEditorScreen(
-          sourcePath: widget.photoPath,
+          sourcePath: _frontPath!,
           aspectRatio: 5 / 7,
           title: 'Crop · ${widget.side}',
         ),
       ),
     );
-    if (!mounted) return;
-    if (saved == null) {
-      Navigator.pop(context);
-      return;
-    }
+    if (!mounted || saved == null) return;
     setState(() => _frontPath = saved);
   }
 

@@ -5,7 +5,75 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-21
+
 ### Added
+- Collection folders now remember their own sort (Favorite, Recent, Rarity,
+  or ID with Ascending/Descending) independently per folder, via a new Sort
+  button next to the folder's Display View toggle. ID sorting is
+  numeric-aware (`OP14-2` sorts before `OP14-10`), Rarity uses the existing
+  per-category rarity hierarchy, and a folder that's never been sorted
+  defaults to ID Ascending.
+
+### Changed
+- Collection folder grid now shows 3 columns on mobile (was 4) in both Grid
+  and Grid-with-details display modes.
+- Folder Favorite now toggles from a directly clickable star in the upper-
+  left corner of the folder cover on My Collection — the same look and touch
+  behavior as the collection-card favorite star — instead of via the folder
+  long-press menu.
+
+### Removed
+- The redundant "Select" button inside a folder screen; long-pressing a
+  card already enters selection mode, which is now the only way in.
+- "Add/Remove from favorites" from the folder long-press menu, superseded by
+  the folder's own clickable favorite star.
+
+## [1.2.0] - 2026-09-21
+
+### Added
+- Burst-mode camera captures are now protected against data loss: every
+  shot is recorded in a persistent capture session the moment it's taken
+  (not just held in the camera screen's own memory), so tapping another
+  bottom-nav tab, pressing Back, backgrounding the app, or the app getting
+  killed no longer loses a batch of captured photos. Leaving the camera
+  with unsaved photos — a tab switch or Back — now prompts to continue
+  capturing, save & leave, or discard; leaving via Home does neither (every
+  shot is already safe, so there's nothing to confirm) and just releases
+  the camera hardware until you return. If the app was killed mid-session,
+  the next launch offers to recover or discard whatever was captured.
+  "Done · review" now commits the session into real collection entries in
+  a way that's safe to retry if interrupted (e.g. a crash mid-save) —
+  already-committed shots are never duplicated.
+
+## [1.1.0] - 2026-09-21
+
+### Added
+- A folder's camera FAB is now a `+` "Add collection" menu offering Take a
+  photo (the existing camera), Upload image, or Add without image, so a
+  card can be filed without ever opening the camera. Upload image reuses
+  the same gallery picker and crop editor covers use, then the existing
+  name/tag/file screen, pre-filed into the current folder; Add without
+  image opens the existing "Add without a photo" screen the same way.
+- The camera's card-guide brackets are now a real, adjustable live capture
+  frame: pinch to zoom uses the camera's own native zoom (not a scaled-up
+  preview), and the frame always shows exactly the region that will be kept
+  in the saved photo, computed from the same aspect-ratio math on both
+  sides. Zoom persists for the whole camera session and across every shot
+  in a burst — set it once, keep shooting — with a small reset control to
+  return to the default. Guided Scan's forced crop-after-every-shot step is
+  gone (the shot already arrives framed); its crop editor is now an
+  optional "Re-edit" instead. Applies to Quick burst, Guided scan, and
+  Single alike, since they all share one capture path. The crop itself runs
+  off the UI thread so burst shooting doesn't stall.
+- A third folder display mode, "Grid with details", alongside the existing
+  Grid and List: the same image grid with name (left) and card number
+  (right) below each photo, ellipsized rather than overlapping when either
+  runs long. The view-mode toggle now cycles Grid → Grid with details →
+  List → Grid, and the chosen mode is remembered across folders and app
+  restarts (same `shared_preferences` pattern My Collection's own display
+  toggle already uses). Favorites and Select mode work unchanged in all
+  three modes.
 - Folders can be marked Favorite: a "★ Add/Remove from favorites" entry in
   the folder long-press menu (persisted `isFavorite` column on `releases`,
   defaulting to `false` for existing folders via a v5 migration), a small
