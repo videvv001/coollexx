@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/card_condition.dart';
+import '../../models/release.dart';
 import '../../models/release_category.dart';
 import '../../models/tcg_card.dart';
 import '../../state/app_state.dart';
 import '../../widgets/photo_placeholder.dart';
 import '../card_detail/card_detail_screen.dart';
+import '../folder/folder_screen.dart';
+import '../shared/folder_cover.dart';
 
 class SearchFilters {
   String? releaseId;
@@ -36,6 +39,8 @@ class _SearchScreenState extends State<SearchScreen> {
   final _queryController = TextEditingController();
   final _filters = SearchFilters();
   List<TcgCard> _results = [];
+  List<Release> _folderResults = [];
+  final Map<String, int> _folderCardCounts = {};
   bool _loaded = false;
 
   @override
@@ -57,9 +62,24 @@ class _SearchScreenState extends State<SearchScreen> {
       category: _filters.category,
       rarities: _filters.rarities.isEmpty ? null : _filters.rarities.toList(),
     );
+    // Folder name matching mirrors the card search's case-insensitive,
+    // partial-match behavior (a plain substring check == an unanchored SQL
+    // LIKE '%query%'), so "OP1" finds "OP14" just like it finds cards.
+    final query = _queryController.text.trim().toLowerCase();
+    final folderMatches = query.isEmpty
+        ? <Release>[]
+        : state.releases
+              .where((r) => r.name.toLowerCase().contains(query))
+              .toList();
+    for (final r in folderMatches) {
+      _folderCardCounts[r.id] ??= await state.collection.cardCountInRelease(
+        r.id,
+      );
+    }
     if (!mounted) return;
     setState(() {
       _results = results;
+      _folderResults = folderMatches;
       _loaded = true;
     });
   }
@@ -96,41 +116,115 @@ class _SearchScreenState extends State<SearchScreen> {
       ),
       body: !_loaded
           ? const Center(child: CircularProgressIndicator())
-          : _results.isEmpty
+          : _results.isEmpty && _folderResults.isEmpty
           ? Center(
               child: Text(
-                'No cards match',
+                'No results',
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
               ),
             )
-          : GridView.builder(
+          : ListView(
               padding: const EdgeInsets.all(12),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                mainAxisSpacing: 8,
-                crossAxisSpacing: 8,
-                childAspectRatio: 5 / 7,
-              ),
-              itemCount: _results.length,
-              itemBuilder: (context, index) {
-                final card = _results[index];
-                return GestureDetector(
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => CardDetailScreen(cardId: card.id),
+              children: [
+                if (_folderResults.isNotEmpty) ...[
+                  Text(
+                    'FOLDERS',
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      letterSpacing: 0.4,
                     ),
                   ),
-                  child: PhotoPlaceholder(
-                    path: card.thumbnailPath,
-                    dashed: !card.hasPhoto,
-                    borderRadius: 6,
+                  const SizedBox(height: 4),
+                  for (final release in _folderResults)
+                    _FolderResultTile(
+                      release: release,
+                      cardCount: _folderCardCounts[release.id] ?? 0,
+                    ),
+                  const SizedBox(height: 12),
+                ],
+                if (_results.isNotEmpty) ...[
+                  if (_folderResults.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        'CARDS',
+                        style: Theme.of(context).textTheme.labelLarge
+                            ?.copyWith(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                              letterSpacing: 0.4,
+                            ),
+                      ),
+                    ),
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          mainAxisSpacing: 8,
+                          crossAxisSpacing: 8,
+                          childAspectRatio: 5 / 7,
+                        ),
+                    itemCount: _results.length,
+                    itemBuilder: (context, index) {
+                      final card = _results[index];
+                      return GestureDetector(
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => CardDetailScreen(cardId: card.id),
+                          ),
+                        ),
+                        child: PhotoPlaceholder(
+                          path: card.thumbnailPath,
+                          dashed: !card.hasPhoto,
+                          borderRadius: 6,
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
+                ],
+              ],
             ),
+    );
+  }
+}
+
+/// A folder hit in mixed search results — same tap target as the folder
+/// grid on My Collection (opens [FolderScreen], never Edit Folder), just
+/// laid out as a row so it reads distinctly from the card grid below it.
+class _FolderResultTile extends StatelessWidget {
+  const _FolderResultTile({required this.release, required this.cardCount});
+
+  final Release release;
+  final int cardCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: SizedBox(
+        width: 48,
+        child: PhotoPlaceholder(
+          path: release.displayLandscapeCover,
+          aspectRatio: kLandscapeCoverAspect,
+          icon: Icons.folder_outlined,
+          borderRadius: 6,
+        ),
+      ),
+      title: Text(release.name),
+      subtitle: Text('$cardCount cards'),
+      trailing: release.isFavorite
+          ? const Icon(Icons.star, size: 18, color: Colors.amber)
+          : null,
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => FolderScreen(releaseId: release.id)),
+      ),
     );
   }
 }

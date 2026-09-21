@@ -64,9 +64,16 @@ class CollectionRepository {
     );
   }
 
+  /// Deletes a release together with every card filed under it (its
+  /// "collection entries") in one transaction, so a folder never leaves
+  /// orphaned cards behind. Each deleted card's value entries cascade via
+  /// the `value_entries` table's own foreign key.
   Future<void> deleteRelease(String id) async {
     final db = await _db;
-    await db.delete('releases', where: 'id = ?', whereArgs: [id]);
+    await db.transaction((txn) async {
+      await txn.delete('cards', where: 'releaseId = ?', whereArgs: [id]);
+      await txn.delete('releases', where: 'id = ?', whereArgs: [id]);
+    });
   }
 
   // ---- Cards ----------------------------------------------------
@@ -165,6 +172,49 @@ class CollectionRepository {
       batch.update('cards', values, where: 'id = ?', whereArgs: [id]);
     }
     await batch.commit(noResult: true);
+  }
+
+  /// Duplicates each of [ids] into [releaseId] as an independent collection
+  /// entry (own id, own createdAt) carrying over the rest of the user-owned
+  /// fields. The originals are untouched. One transaction, so a failure
+  /// partway through leaves no partial copies behind.
+  Future<List<TcgCard>> copyCards(
+    List<String> ids, {
+    required String releaseId,
+  }) async {
+    final db = await _db;
+    return db.transaction((txn) async {
+      final copies = <TcgCard>[];
+      for (final id in ids) {
+        final rows = await txn.query('cards', where: 'id = ?', whereArgs: [id]);
+        if (rows.isEmpty) continue;
+        final original = TcgCard.fromMap(rows.first);
+        final copy = TcgCard(
+          id: _uuid.v4(),
+          name: original.name,
+          number: original.number,
+          rarity: original.rarity,
+          language: original.language,
+          kind: original.kind,
+          color: original.color,
+          type: original.type,
+          condition: original.condition,
+          copies: original.copies,
+          releaseId: releaseId,
+          photoPaths: original.photoPaths,
+          pricePaid: original.pricePaid,
+          datePaid: original.datePaid,
+          forTrade: original.forTrade,
+          onWishlist: original.onWishlist,
+          isFavorite: original.isFavorite,
+          notes: original.notes,
+          createdAt: DateTime.now(),
+        );
+        await txn.insert('cards', copy.toMap());
+        copies.add(copy);
+      }
+      return copies;
+    });
   }
 
   Future<void> setTradeFlags(

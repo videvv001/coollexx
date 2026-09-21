@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import '../../models/tcg_card.dart';
 import '../../state/app_state.dart';
 import '../../widgets/photo_placeholder.dart';
+import '../shared/confirm_dialog.dart';
 import 'assign_release_screen.dart';
 import 'photo_preview_screen.dart';
 
@@ -142,24 +143,13 @@ class _BatchTriageScreenState extends State<BatchTriageScreen> {
   }
 
   Future<void> _binAll(AppState state) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Bin all?'),
-        content: Text('Deletes all ${_cards.length} shots in this batch.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Bin all'),
-          ),
-        ],
-      ),
+    final confirmed = await confirmDelete(
+      context,
+      title: 'Bin all?',
+      message: 'Deletes all ${_cards.length} shots in this batch.',
+      confirmLabel: 'Bin all',
     );
-    if (confirmed != true) return;
+    if (!confirmed) return;
     final removed = List.of(_cards);
     await state.deleteCards(removed.map((c) => c.id).toList());
     setState(() => _cards.clear());

@@ -23,7 +23,7 @@ class AppDatabase {
     final path = p.join(dir.path, 'pokedex_tcg.db');
     return openDatabase(
       path,
-      version: 3,
+      version: 5,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE releases (
@@ -36,7 +36,10 @@ class AppDatabase {
             officialSetCode TEXT,
             totalCardsInSet INTEGER,
             category TEXT NOT NULL DEFAULT 'Others',
-            language TEXT
+            language TEXT,
+            landscapeCoverPath TEXT,
+            portraitCoverPath TEXT,
+            isFavorite INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await db.execute('''
@@ -101,6 +104,19 @@ class AppDatabase {
           await db.execute('ALTER TABLE cards ADD COLUMN kind TEXT');
           await db.execute('ALTER TABLE cards ADD COLUMN color TEXT');
           await db.execute('ALTER TABLE cards ADD COLUMN type TEXT');
+        }
+        if (oldVersion < 4) {
+          await db.execute(
+            'ALTER TABLE releases ADD COLUMN landscapeCoverPath TEXT',
+          );
+          await db.execute(
+            'ALTER TABLE releases ADD COLUMN portraitCoverPath TEXT',
+          );
+        }
+        if (oldVersion < 5) {
+          await db.execute(
+            'ALTER TABLE releases ADD COLUMN isFavorite INTEGER NOT NULL DEFAULT 0',
+          );
         }
       },
       onConfigure: (db) async {

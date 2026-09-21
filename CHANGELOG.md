@@ -6,6 +6,104 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Folders can be marked Favorite: a "★ Add/Remove from favorites" entry in
+  the folder long-press menu (persisted `isFavorite` column on `releases`,
+  defaulting to `false` for existing folders via a v5 migration), a small
+  star badge on favorited folder cards in both landscape and portrait
+  display modes, and a new "Favorite" sort option on My Collection that
+  groups favorited folders first, sorted by date within each group.
+- My Collection search now matches folder names (case-insensitive, partial)
+  alongside the existing card search, shown as a "Folders" section above the
+  card grid results; tapping a folder result opens it exactly like tapping
+  it from My Collection.
+- Move and Copy a collection entry to a different folder: available from a
+  card's own action menu ("Move to folder"/"Copy to folder") and, for
+  multi-selected cards, from the folder screen's selection toolbar. Move
+  reassigns the existing entry's folder in place; Copy inserts an
+  independent entry (its own id, its own photos/condition/notes/etc. carried
+  over) so the original is untouched. Both use a new shared destination
+  picker (cover thumbnail, name, card count, searchable once a collection
+  has more than a handful of folders); Move hides the card's current folder
+  from the picker. A snackbar confirms the destination afterwards.
+- Edit Folder's landscape/portrait cover pencil now offers "Adjust image"
+  above "Take a photo"/"Choose from gallery" whenever that orientation
+  already has a cover, reopening the existing crop/reposition screen on the
+  current image instead of forcing a re-pick. Hidden when the orientation
+  has no image yet. Reuses the same picker sheet and `PhotoEditorScreen` as
+  every other cover/photo flow — no separate crop implementation.
+- Long-pressing a folder on My Collection now opens an Edit/Delete menu
+  (replacing the old edit-pencil badge). Delete asks for confirmation,
+  naming how many cards will go with it, then deletes the folder together
+  with every card filed under it in one transaction — no more orphaned
+  collection entries left behind (and no more "cards need a folder" banner
+  caused by a folder delete). The folder's own cover images are cleaned up
+  too. Same cascading delete now backs the "Delete" item in a folder's own
+  "..." menu.
+- A shared `confirmDelete` dialog (Cancel/Delete, destructive styling, safe
+  defaults on back-button/outside-tap) now backs every destructive delete in
+  the app: folder delete, card delete, bulk bin, batch-triage bin all, and
+  swiping away a value-history entry (which previously deleted immediately
+  with no confirmation).
+
+## [1.0.2] - 2026-09-21
+
+### Fixed
+- Edit Folder's landscape/portrait cover picker (Camera/gallery source sheet,
+  then the crop screen) rendered behind the Edit Folder dialog instead of
+  above it, making it unusable. Cause: `AppShell` gives each bottom tab its
+  own nested `Navigator`; `showDialog` defaults to opening on the app's root
+  Navigator while `showModalBottomSheet`/`Navigator.push` default to the
+  nearest Navigator to whatever context they're given — the cover-picker
+  code closed over the tab's own context (captured before the dialog
+  opened), so the picker and crop screen landed one Overlay layer below the
+  dialog. Both now explicitly target the root Navigator
+  (`useRootNavigator: true` / `Navigator.of(context, rootNavigator: true)`),
+  matching where the dialog itself lives.
+
+## [1.0.1] - 2026-09-21
+
+### Added
+- Release folders now support separate landscape and portrait covers,
+  each independently croppable, instead of one cover image locked to a
+  single orientation. Picking a cover for one orientation defaults the
+  other to a centered crop of the same photo, so a single image is enough
+  unless you want two different ones. Edit Folder shows both previews at
+  their real aspect ratio; the in-folder "Set cover photo" flow now writes
+  into the same landscape/portrait fields, so there's one cover system, not
+  two. Existing folders with only the old single cover keep working via a
+  fallback to it until edited.
+- My Collection has a landscape/portrait display toggle next to
+  Search/Sort/Filter, remembered across restarts, that switches both the
+  grid's card shape and which cover each folder shows.
+
+### Fixed
+- My Collection folder cards could overlap the row below them: the grid
+  used one fixed aspect ratio for every cell while each folder's cover
+  rendered at its own (portrait or landscape) aspect ratio, so a portrait
+  cover's taller content overflowed its cell. The grid now derives its
+  aspect ratio from the actual cover shape and a fixed text-block budget,
+  so cells always reserve enough height.
+
+### Changed
+- Card detail screen redesigned to a compact, wireframe-driven layout: a
+  swipeable image carousel (position badge, prev/next arrows, tap-through to
+  the existing full-screen viewer) with the copy count as a badge on the
+  image itself; a category-driven metadata grid (ID, Release/Language,
+  Rarity(/Type), Condition) built from a small per-`ReleaseCategory` field
+  table (`card_metadata_fields.dart`) so a new category (Yu-Gi-Oh!, Magic,
+  Sports, ...) is a one-entry addition, not a new branch in the UI; and a
+  Value section with Add/History as icon buttons instead of a separate
+  bottom button and text link. The inline copies +/- stepper and condition
+  chips move to the existing Edit screen, which already edits both.
+- Value chart now plots a fixed 12 calendar-accurate periods (current day/
+  week/month/year plus the previous 11) instead of a user-picked count of
+  rolling 30/365-day-approximated windows, using each period's *latest*
+  entry rather than a mean — matches how a value-over-time chart should
+  read. The Y-axis now shows real, auto-scaled monetary values (e.g. $250,
+  $1K, $1.5K) instead of being hidden, and is zero-based to match the
+  redesigned chart.
+
+### Added
 - Release folders can be edited after creation: press and hold a folder on
   My Collection to reveal an Edit icon, which opens a modal pre-filled with
   the folder's cover image, name, and language — Save updates the same

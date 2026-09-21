@@ -5,6 +5,7 @@ import '../../models/tcg_card.dart';
 import '../../models/value_entry.dart';
 import '../../state/app_state.dart';
 import '../../utils/formatting.dart';
+import '../shared/confirm_dialog.dart';
 import 'add_value_sheet.dart';
 
 class ValueHistoryScreen extends StatefulWidget {
@@ -196,6 +197,11 @@ class _EntryRow extends StatelessWidget {
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: const Icon(Icons.delete_outline),
+      ),
+      confirmDismiss: (_) => confirmDelete(
+        context,
+        title: 'Delete this entry?',
+        message: 'This removes ${formatLongDate(entry.date)}\'s value entry.',
       ),
       onDismissed: (_) => onDelete(),
       child: row,

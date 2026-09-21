@@ -35,7 +35,9 @@ void main() {
         id TEXT PRIMARY KEY, name TEXT NOT NULL, dateCreated TEXT NOT NULL,
         coverPhotoPath TEXT, coverPortrait INTEGER NOT NULL DEFAULT 0,
         orderIndex INTEGER NOT NULL, officialSetCode TEXT, totalCardsInSet INTEGER,
-        category TEXT NOT NULL DEFAULT 'Others', language TEXT
+        category TEXT NOT NULL DEFAULT 'Others', language TEXT,
+        landscapeCoverPath TEXT, portraitCoverPath TEXT,
+        isFavorite INTEGER NOT NULL DEFAULT 0
       )
     ''');
     await db.execute('''

@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/release.dart';
 import '../../models/tcg_card.dart';
 import '../../state/app_state.dart';
 import '../../widgets/photo_placeholder.dart';
-import '../../data/photo_store.dart';
 import '../add_manual/add_manual_screen.dart';
 import '../capture/capture_screen.dart';
 import '../card_detail/card_detail_screen.dart';
-import '../shared/photo_editor_screen.dart';
-import '../shared/photo_source_sheet.dart';
+import '../shared/confirm_dialog.dart';
+import '../shared/folder_cover.dart';
+import '../shared/folder_picker_sheet.dart';
 
 enum _ViewMode { grid, list }
 
@@ -80,85 +81,124 @@ class _FolderScreenState extends State<FolderScreen> {
     if (release == null || !mounted) return;
     final cards = await state.collection.cardsInRelease(widget.releaseId);
     if (!mounted) return;
-    final sourcePath = await pickPhotoSource(
-      context,
-      allowExistingCardPhoto: true,
-      releaseCards: cards,
-    );
-    if (sourcePath == null || !mounted) return;
     final portrait = await _pickCoverShape();
     if (portrait == null || !mounted) return;
-    final savedPath = await Navigator.push<String>(
+    final otherUnset = portrait
+        ? release.landscapeCoverPath == null
+        : release.portraitCoverPath == null;
+    final oldPath = portrait
+        ? release.portraitCoverPath
+        : release.landscapeCoverPath;
+    final result = await pickCoverWithAutoFill(
       context,
-      MaterialPageRoute(
-        builder: (_) => PhotoEditorScreen(
-          sourcePath: sourcePath,
-          aspectRatio: portrait ? 5 / 7 : 4 / 3,
-          title: 'Cover photo',
-        ),
+      aspectRatio: portrait ? kPortraitCoverAspect : kLandscapeCoverAspect,
+      title: 'Cover photo',
+      otherAspectRatio: otherUnset
+          ? (portrait ? kLandscapeCoverAspect : kPortraitCoverAspect)
+          : null,
+      allowExistingCardPhoto: true,
+      releaseCards: cards,
+      currentImagePath: oldPath,
+    );
+    if (result == null) return;
+    final oldOtherPath = portrait
+        ? release.landscapeCoverPath
+        : release.portraitCoverPath;
+    final newLandscape = portrait
+        ? (result.autoOtherPath ?? release.landscapeCoverPath)
+        : result.croppedPath;
+    final newPortrait = portrait
+        ? result.croppedPath
+        : (result.autoOtherPath ?? release.portraitCoverPath);
+    await state.collection.updateRelease(
+      release.copyWith(
+        landscapeCoverPath: newLandscape,
+        portraitCoverPath: newPortrait,
       ),
     );
-    if (savedPath == null) return;
-    final oldPath = release.coverPhotoPath;
-    await state.collection.updateRelease(
-      release.copyWith(coverPhotoPath: savedPath, coverPortrait: portrait),
-    );
-    if (oldPath != null) await PhotoStore.instance.delete(oldPath);
+    await deleteCoverIfOrphaned(oldPath, [
+      release.coverPhotoPath,
+      newLandscape,
+      newPortrait,
+    ]);
+    if (result.autoOtherPath != null) {
+      await deleteCoverIfOrphaned(oldOtherPath, [
+        release.coverPhotoPath,
+        newLandscape,
+        newPortrait,
+      ]);
+    }
     await state.refresh();
     if (mounted) setState(() {});
   }
 
-  Future<void> _deleteRelease(AppState state) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete release?'),
-        content: const Text('Cards in this release become unsorted.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+  Future<void> _deleteRelease(
+    AppState state,
+    Release release,
+    List<TcgCard> cards,
+  ) async {
+    final cardCount = cards.fold<int>(0, (sum, c) => sum + c.copies);
+    final deleted = await confirmAndDeleteRelease(
+      context,
+      state,
+      release,
+      cardCount: cardCount,
     );
-    if (confirmed == true) {
-      final cards = await state.collection.cardsInRelease(widget.releaseId);
-      await state.moveCards(
-        cards.map((c) => c.id).toList(),
-        clearRelease: true,
-      );
-      await state.collection.deleteRelease(widget.releaseId);
-      await state.refresh();
-      if (mounted) Navigator.pop(context);
-    }
+    if (deleted && mounted) Navigator.pop(context);
   }
 
   Future<void> _bulkMove(AppState state) async {
-    final release = await showDialog<String>(
-      context: context,
-      builder: (context) => SimpleDialog(
-        title: const Text('Move to release'),
-        children: [
-          for (final r in state.releases)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, r.id),
-              child: Text(r.name),
-            ),
-        ],
-      ),
+    final destination = await pickDestinationFolder(
+      context,
+      state: state,
+      title: 'Move to folder',
+      excludeReleaseId: widget.releaseId,
     );
-    if (release != null) {
-      await state.moveCards(_selected.toList(), releaseId: release);
-      setState(() {
-        _selected.clear();
-        _selectMode = false;
-      });
-    }
+    if (destination == null) return;
+    await state.moveCards(_selected.toList(), releaseId: destination);
+    final count = _selected.length;
+    setState(() {
+      _selected.clear();
+      _selectMode = false;
+    });
+    _showMoveCopyFeedback('Moved', count, destination, state);
+  }
+
+  Future<void> _bulkCopy(AppState state) async {
+    final destination = await pickDestinationFolder(
+      context,
+      state: state,
+      title: 'Copy to folder',
+    );
+    if (destination == null) return;
+    await state.copyCards(_selected.toList(), releaseId: destination);
+    final count = _selected.length;
+    setState(() {
+      _selected.clear();
+      _selectMode = false;
+    });
+    _showMoveCopyFeedback('Copied', count, destination, state);
+  }
+
+  void _showMoveCopyFeedback(
+    String verb,
+    int count,
+    String destinationReleaseId,
+    AppState state,
+  ) {
+    if (!mounted) return;
+    final name = state.releases
+        .firstWhere((r) => r.id == destinationReleaseId)
+        .name;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            '$verb $count card${count == 1 ? '' : 's'} to $name',
+          ),
+        ),
+      );
   }
 
   Future<void> _bulkTrade(AppState state) async {
@@ -211,24 +251,13 @@ class _FolderScreenState extends State<FolderScreen> {
   }
 
   Future<void> _bulkBin(AppState state) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Bin ${_selected.length} cards?'),
-        content: const Text('This deletes them and their value history.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Bin'),
-          ),
-        ],
-      ),
+    final confirmed = await confirmDelete(
+      context,
+      title: 'Bin ${_selected.length} cards?',
+      message: 'This deletes them and their value history.',
+      confirmLabel: 'Bin',
     );
-    if (confirmed != true) return;
+    if (!confirmed) return;
     final ids = _selected.toList();
     final removed = <TcgCard>[];
     for (final id in ids) {
@@ -280,7 +309,7 @@ class _FolderScreenState extends State<FolderScreen> {
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        final release = snapshot.data![0] as dynamic;
+        final release = snapshot.data![0] as Release?;
         final cards = snapshot.data![1] as List<TcgCard>;
         if (release == null) {
           return const Scaffold(body: Center(child: Text('Release not found')));
@@ -298,7 +327,7 @@ class _FolderScreenState extends State<FolderScreen> {
                   )
                 : const BackButton(),
             title: Text(
-              _selectMode ? '${_selected.length} selected' : release.name as String,
+              _selectMode ? '${_selected.length} selected' : release.name,
             ),
             actions: _selectMode
                 ? [
@@ -330,7 +359,9 @@ class _FolderScreenState extends State<FolderScreen> {
                       onSelected: (choice) {
                         if (choice == 'cover') _setCoverPhoto(state);
                         if (choice == 'rename') _renameRelease(state);
-                        if (choice == 'delete') _deleteRelease(state);
+                        if (choice == 'delete') {
+                          _deleteRelease(state, release, cards);
+                        }
                       },
                       itemBuilder: (context) => [
                         const PopupMenuItem(
@@ -370,6 +401,11 @@ class _FolderScreenState extends State<FolderScreen> {
                         onPressed: () => _bulkMove(state),
                         icon: const Icon(Icons.drive_file_move_outline),
                         label: const Text('Move'),
+                      ),
+                      TextButton.icon(
+                        onPressed: () => _bulkCopy(state),
+                        icon: const Icon(Icons.copy_outlined),
+                        label: const Text('Copy'),
                       ),
                       TextButton.icon(
                         onPressed: () => _bulkTag(state),

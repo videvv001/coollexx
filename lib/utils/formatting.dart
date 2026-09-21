@@ -1,10 +1,17 @@
 import 'package:intl/intl.dart';
 
 final _currency = NumberFormat.simpleCurrency();
+final _compactCurrency = NumberFormat.compactSimpleCurrency();
 final _shortDate = DateFormat.MMMd();
 final _longDate = DateFormat('d MMM yyyy');
+final _monthLabel = DateFormat.MMM();
 
 String formatCurrency(num amount) => _currency.format(amount);
+
+/// Abbreviated for chart axes: $250, $1K, $1.5K, $10K.
+String formatCompactCurrency(num amount) => _compactCurrency.format(amount);
+
+String formatMonthLabel(DateTime date) => _monthLabel.format(date);
 
 String formatShortDate(DateTime date) => _shortDate.format(date);
 

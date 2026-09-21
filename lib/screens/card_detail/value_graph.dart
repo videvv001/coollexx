@@ -2,11 +2,13 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/value_bucket.dart';
+import '../../utils/formatting.dart';
 
 /// Plots a fixed grid of buckets: straight segments within each run of
 /// consecutive non-null buckets, never interpolated or extrapolated across
 /// a null (empty) bucket — a null simply breaks the line into a visible
-/// gap. Scales to the visible min/max with headroom, not to zero.
+/// gap. The Y-axis is real money, zero-based, scaled to the highest visible
+/// value (never percentages).
 class ValueGraph extends StatelessWidget {
   const ValueGraph({super.key, required this.buckets, this.height = 160});
 
@@ -26,18 +28,16 @@ class ValueGraph extends StatelessWidget {
         height: height,
         child: Center(
           child: Text(
-            'No value recorded',
+            'No value history yet',
             style: TextStyle(color: scheme.onSurfaceVariant),
           ),
         ),
       );
     }
 
-    final min = amounts.reduce((a, b) => a < b ? a : b);
     final max = amounts.reduce((a, b) => a > b ? a : b);
-    final headroom = (max - min) * 0.2 + 1;
-    final minY = min - headroom;
-    final maxY = max + headroom;
+    const minY = 0.0;
+    final maxY = max <= 0 ? 1.0 : max * 1.15;
 
     // Split into runs of consecutive non-null buckets — each run is its
     // own line segment, so a gap never gets bridged.
@@ -64,7 +64,7 @@ class ValueGraph extends StatelessWidget {
           maxX: (buckets.length - 1).toDouble(),
           gridData: FlGridData(
             drawVerticalLine: false,
-            horizontalInterval: (maxY - minY) / 2,
+            horizontalInterval: (maxY - minY) / 4,
             getDrawingHorizontalLine: (_) =>
                 FlLine(color: scheme.outlineVariant, strokeWidth: 1),
           ),
@@ -75,13 +75,30 @@ class ValueGraph extends StatelessWidget {
             rightTitles: const AxisTitles(
               sideTitles: SideTitles(showTitles: false),
             ),
-            leftTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false),
+            leftTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                interval: (maxY - minY) / 4,
+                reservedSize: 44,
+                getTitlesWidget: (value, meta) => Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: Text(
+                    formatCompactCurrency(value),
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
             ),
             bottomTitles: AxisTitles(
               sideTitles: SideTitles(
                 showTitles: true,
-                interval: 1,
+                // Every other bucket — 12 periods' worth of labels is too
+                // crowded for a phone-width chart; fl_chart still plots all
+                // 12 points, this only thins the text underneath.
+                interval: 2,
                 reservedSize: 22,
                 getTitlesWidget: (value, meta) {
                   final index = value.round();

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../data/photo_store.dart';
 import '../../models/card_language.dart';
 import '../../models/release.dart';
 import '../../models/release_category.dart';
@@ -12,11 +12,24 @@ import '../capture/batch_triage_screen.dart';
 import '../capture/capture_screen.dart';
 import '../folder/folder_screen.dart';
 import '../search/search_screen.dart';
-import '../shared/photo_editor_screen.dart';
-import '../shared/photo_source_sheet.dart';
+import '../shared/folder_cover.dart';
 import '../empty/empty_first_run.dart';
 
-enum _SortMode { recent, alpha, value }
+enum _SortMode { recent, alpha, value, favorite }
+
+enum _DisplayMode { landscape, portrait }
+
+const _displayModePrefsKey = 'collection_display_mode';
+
+extension on _DisplayMode {
+  bool get isPortrait => this == _DisplayMode.portrait;
+  double get coverAspect =>
+      isPortrait ? kPortraitCoverAspect : kLandscapeCoverAspect;
+  IconData get icon =>
+      isPortrait ? Icons.crop_landscape_outlined : Icons.crop_portrait_outlined;
+  String get switchToLabel =>
+      isPortrait ? 'Switch to landscape view' : 'Switch to portrait view';
+}
 
 enum _AddAction { newRelease, takePhoto, uploadGallery }
 
@@ -25,6 +38,7 @@ extension on _SortMode {
     _SortMode.recent => 'Recent',
     _SortMode.alpha => 'A–Z',
     _SortMode.value => 'Value',
+    _SortMode.favorite => 'Favorite',
   };
 }
 
@@ -37,9 +51,32 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   _SortMode _sort = _SortMode.recent;
+  _DisplayMode _displayMode = _DisplayMode.landscape;
   bool _forceShowGrid = false;
   final Map<String, int> _cardCounts = {};
-  String? _editHintReleaseId;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDisplayMode();
+  }
+
+  Future<void> _loadDisplayMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString(_displayModePrefsKey);
+    if (saved == null || !mounted) return;
+    setState(() => _displayMode = _DisplayMode.values.byName(saved));
+  }
+
+  Future<void> _toggleDisplayMode() async {
+    setState(() {
+      _displayMode = _displayMode.isPortrait
+          ? _DisplayMode.landscape
+          : _DisplayMode.portrait;
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_displayModePrefsKey, _displayMode.name);
+  }
 
   Future<void> _loadCounts(AppState state) async {
     for (final release in state.releases) {
@@ -64,6 +101,14 @@ class _HomeScreenState extends State<HomeScreen> {
         list.sort(
           (a, b) => (_cardCounts[b.id] ?? 0).compareTo(_cardCounts[a.id] ?? 0),
         );
+        break;
+      case _SortMode.favorite:
+        list.sort((a, b) {
+          if (a.isFavorite != b.isFavorite) {
+            return a.isFavorite ? -1 : 1;
+          }
+          return b.dateCreated.compareTo(a.dateCreated);
+        });
         break;
     }
     return list;
@@ -143,62 +188,86 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _editRelease(AppState state, Release release) async {
     final controller = TextEditingController(text: release.name);
-    var coverPhotoPath = release.coverPhotoPath;
     var language = release.language;
+    var landscapePath = release.displayLandscapeCover;
+    var portraitPath = release.displayPortraitCover;
+
+    Future<void> pickCover(
+      StateSetter setDialogState, {
+      required bool portrait,
+    }) async {
+      final otherUnset = portrait ? landscapePath == null : portraitPath == null;
+      final result = await pickCoverWithAutoFill(
+        context,
+        aspectRatio: portrait ? kPortraitCoverAspect : kLandscapeCoverAspect,
+        title: portrait ? 'Portrait cover' : 'Landscape cover',
+        otherAspectRatio: otherUnset
+            ? (portrait ? kLandscapeCoverAspect : kPortraitCoverAspect)
+            : null,
+        currentImagePath: portrait ? portraitPath : landscapePath,
+      );
+      if (result == null || !context.mounted) return;
+      setDialogState(() {
+        if (portrait) {
+          portraitPath = result.croppedPath;
+          landscapePath = result.autoOtherPath ?? landscapePath;
+        } else {
+          landscapePath = result.croppedPath;
+          portraitPath = result.autoOtherPath ?? portraitPath;
+        }
+      });
+    }
+
     final saved = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: const Text('Edit folder'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              GestureDetector(
-                onTap: () async {
-                  final sourcePath = await pickPhotoSource(context);
-                  if (sourcePath == null || !context.mounted) return;
-                  final editedPath = await Navigator.push<String>(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => PhotoEditorScreen(
-                        sourcePath: sourcePath,
-                        aspectRatio: release.coverPortrait ? 5 / 7 : 4 / 3,
-                        title: 'Cover photo',
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: _CoverPickerTile(
+                        label: 'Landscape',
+                        path: landscapePath,
+                        aspectRatio: kLandscapeCoverAspect,
+                        onTap: () => pickCover(setDialogState, portrait: false),
                       ),
                     ),
-                  );
-                  if (editedPath != null) {
-                    setDialogState(() => coverPhotoPath = editedPath);
-                  }
-                },
-                child: SizedBox(
-                  width: 100,
-                  child: PhotoPlaceholder(
-                    path: coverPhotoPath,
-                    aspectRatio: release.coverPortrait ? 5 / 7 : 4 / 3,
-                    icon: Icons.folder_outlined,
-                    borderRadius: 10,
-                  ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _CoverPickerTile(
+                        label: 'Portrait',
+                        path: portraitPath,
+                        aspectRatio: kPortraitCoverAspect,
+                        onTap: () => pickCover(setDialogState, portrait: true),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                autofocus: true,
-                decoration: const InputDecoration(labelText: 'Name'),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<CardLanguage?>(
-                initialValue: language,
-                decoration: const InputDecoration(labelText: 'Language'),
-                items: [
-                  const DropdownMenuItem(value: null, child: Text('—')),
-                  for (final l in CardLanguage.values)
-                    DropdownMenuItem(value: l, child: Text(l.label)),
-                ],
-                onChanged: (v) => setDialogState(() => language = v),
-              ),
-            ],
+                const SizedBox(height: 16),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: 'Name'),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<CardLanguage?>(
+                  initialValue: language,
+                  decoration: const InputDecoration(labelText: 'Language'),
+                  items: [
+                    const DropdownMenuItem(value: null, child: Text('—')),
+                    for (final l in CardLanguage.values)
+                      DropdownMenuItem(value: l, child: Text(l.label)),
+                  ],
+                  onChanged: (v) => setDialogState(() => language = v),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -216,20 +285,95 @@ class _HomeScreenState extends State<HomeScreen> {
     if (saved != true || !mounted) return;
     final name = controller.text.trim();
     if (name.isEmpty) return;
-    final oldCoverPath = release.coverPhotoPath;
+    final oldLandscapePath = release.landscapeCoverPath;
+    final oldPortraitPath = release.portraitCoverPath;
     await state.collection.updateRelease(
       release.copyWith(
         name: name,
-        coverPhotoPath: coverPhotoPath,
         language: language,
         clearLanguage: language == null,
+        landscapeCoverPath: landscapePath,
+        clearLandscapeCover: landscapePath == null,
+        portraitCoverPath: portraitPath,
+        clearPortraitCover: portraitPath == null,
       ),
     );
-    if (coverPhotoPath != oldCoverPath && oldCoverPath != null) {
-      await PhotoStore.instance.delete(oldCoverPath);
-    }
+    await deleteCoverIfOrphaned(oldLandscapePath, [
+      release.coverPhotoPath,
+      landscapePath,
+      portraitPath,
+    ]);
+    await deleteCoverIfOrphaned(oldPortraitPath, [
+      release.coverPhotoPath,
+      landscapePath,
+      portraitPath,
+    ]);
     await state.refresh();
     if (mounted) setState(() {});
+  }
+
+  Future<void> _openReleaseMenu(AppState state, Release release) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(
+                release.isFavorite ? Icons.star : Icons.star_border,
+              ),
+              title: Text(
+                release.isFavorite
+                    ? 'Remove from favorites'
+                    : 'Add to favorites',
+              ),
+              onTap: () => Navigator.pop(context, 'favorite'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Edit'),
+              onTap: () => Navigator.pop(context, 'edit'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Delete'),
+              onTap: () => Navigator.pop(context, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case 'favorite':
+        await _toggleFavorite(state, release);
+        break;
+      case 'edit':
+        await _editRelease(state, release);
+        break;
+      case 'delete':
+        await _deleteRelease(state, release);
+        break;
+    }
+  }
+
+  Future<void> _toggleFavorite(AppState state, Release release) async {
+    await state.collection.updateRelease(
+      release.copyWith(isFavorite: !release.isFavorite),
+    );
+    await state.refresh();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _deleteRelease(AppState state, Release release) async {
+    final deleted = await confirmAndDeleteRelease(
+      context,
+      state,
+      release,
+      cardCount: _cardCounts[release.id] ?? 0,
+    );
+    if (deleted && mounted) setState(() {});
   }
 
   Future<void> _pickFromGallery(AppState state) async {
@@ -389,6 +533,14 @@ class _HomeScreenState extends State<HomeScreen> {
                         tooltip: 'Filter',
                       ),
                     ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: IconButton.filledTonal(
+                        onPressed: _toggleDisplayMode,
+                        icon: Icon(_displayMode.icon),
+                        tooltip: _displayMode.switchToLabel,
+                      ),
+                    ),
                   ],
                 ),
                 if (state.unsortedCount > 0) ...[
@@ -396,34 +548,48 @@ class _HomeScreenState extends State<HomeScreen> {
                   _UnsortedTrayBanner(count: state.unsortedCount),
                 ],
                 const SizedBox(height: 16),
-                GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: releases.length,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    mainAxisSpacing: 16,
-                    crossAxisSpacing: 16,
-                    childAspectRatio: 0.78,
-                  ),
-                  itemBuilder: (context, index) {
-                    final release = releases[index];
-                    final cards = _cardCounts[release.id] ?? 0;
-                    return _ReleaseTile(
-                      release: release,
-                      cardCount: cards,
-                      showEditIcon: _editHintReleaseId == release.id,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => FolderScreen(releaseId: release.id),
-                        ),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    const crossAxisCount = 2;
+                    const spacing = 16.0;
+                    // Fixed budget for the name (1 line) + card count (1
+                    // line) block below the cover, so the grid's aspect
+                    // ratio can be derived purely from geometry rather than
+                    // measuring text — keeping every cell the same height
+                    // regardless of image content, which is what actually
+                    // prevents cells from overlapping the row below.
+                    const textBlockHeight = 46.0;
+                    final itemWidth =
+                        (constraints.maxWidth - spacing * (crossAxisCount - 1)) /
+                        crossAxisCount;
+                    final itemHeight =
+                        itemWidth / _displayMode.coverAspect + textBlockHeight;
+                    return GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: releases.length,
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: crossAxisCount,
+                        mainAxisSpacing: spacing,
+                        crossAxisSpacing: spacing,
+                        childAspectRatio: itemWidth / itemHeight,
                       ),
-                      onLongPress: () =>
-                          setState(() => _editHintReleaseId = release.id),
-                      onEdit: () {
-                        setState(() => _editHintReleaseId = null);
-                        _editRelease(state, release);
+                      itemBuilder: (context, index) {
+                        final release = releases[index];
+                        final cards = _cardCounts[release.id] ?? 0;
+                        return _ReleaseTile(
+                          release: release,
+                          displayMode: _displayMode,
+                          cardCount: cards,
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  FolderScreen(releaseId: release.id),
+                            ),
+                          ),
+                          onLongPress: () => _openReleaseMenu(state, release),
+                        );
                       },
                     );
                   },
@@ -440,67 +606,127 @@ class _HomeScreenState extends State<HomeScreen> {
 class _ReleaseTile extends StatelessWidget {
   const _ReleaseTile({
     required this.release,
+    required this.displayMode,
     required this.cardCount,
     required this.onTap,
     required this.onLongPress,
-    required this.onEdit,
-    this.showEditIcon = false,
   });
 
   final Release release;
+  final _DisplayMode displayMode;
   final int cardCount;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
-  final VoidCallback onEdit;
-  final bool showEditIcon;
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: onTap,
-          onLongPress: onLongPress,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Stack(
             children: [
               PhotoPlaceholder(
-                path: release.coverPhotoPath,
-                aspectRatio: release.coverPortrait ? 5 / 7 : 4 / 3,
+                path: displayMode.isPortrait
+                    ? release.displayPortraitCover
+                    : release.displayLandscapeCover,
+                aspectRatio: displayMode.coverAspect,
                 icon: Icons.folder_outlined,
                 borderRadius: 12,
               ),
-              const SizedBox(height: 8),
-              Text(
-                release.name,
-                style: Theme.of(context).textTheme.titleSmall,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              if (release.isFavorite)
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.black38,
+                    ),
+                    child: const Icon(
+                      Icons.star,
+                      size: 14,
+                      color: Colors.amber,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            release.name,
+            style: Theme.of(context).textTheme.titleSmall,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          Text(
+            '$cardCount cards',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One cover preview + label inside the Edit Folder dialog. Shown at its
+/// real aspect ratio so landscape and portrait are visually obvious, with a
+/// small edit badge signalling it's tappable to change or re-crop.
+class _CoverPickerTile extends StatelessWidget {
+  const _CoverPickerTile({
+    required this.label,
+    required this.path,
+    required this.aspectRatio,
+    required this.onTap,
+  });
+
+  final String label;
+  final String? path;
+  final double aspectRatio;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GestureDetector(
+          onTap: onTap,
+          child: Stack(
+            children: [
+              PhotoPlaceholder(
+                path: path,
+                aspectRatio: aspectRatio,
+                icon: Icons.folder_outlined,
+                borderRadius: 10,
               ),
-              Text(
-                '$cardCount cards',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+              Positioned(
+                right: 4,
+                bottom: 4,
+                child: CircleAvatar(
+                  radius: 12,
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  child: const Icon(Icons.edit, size: 12, color: Colors.white),
                 ),
               ),
             ],
           ),
         ),
-        if (showEditIcon)
-          Positioned(
-            top: 6,
-            right: 6,
-            child: GestureDetector(
-              onTap: onEdit,
-              child: CircleAvatar(
-                radius: 14,
-                backgroundColor: Theme.of(context).colorScheme.primary,
-                child: const Icon(Icons.edit, size: 14, color: Colors.white),
-              ),
-            ),
+        const SizedBox(height: 4),
+        Text(label, style: Theme.of(context).textTheme.labelMedium),
+        Text(
+          path == null ? 'Change' : 'Change / Adjust',
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
+        ),
       ],
     );
   }

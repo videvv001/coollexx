@@ -78,6 +78,16 @@ class AppState extends ChangeNotifier {
     await refresh();
   }
 
+  Future<void> copyCards(List<String> ids, {required String releaseId}) async {
+    await collection.copyCards(ids, releaseId: releaseId);
+    await refresh();
+  }
+
+  Future<void> deleteRelease(String id) async {
+    await collection.deleteRelease(id);
+    await refresh();
+  }
+
   Future<Release> createRelease(
     String name, {
     ReleaseCategory category = ReleaseCategory.others,

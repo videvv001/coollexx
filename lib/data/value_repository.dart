@@ -8,30 +8,9 @@ import 'app_database.dart';
 
 enum ValueRange { day, week, month, year }
 
-/// Rolling-window width backing each range, in days — day/week match their
-/// literal names; month/year reuse the same 30/365-day approximation the
-/// range picker has always used rather than introducing calendar-boundary
-/// math (leap years, variable month lengths) nothing else in the app has.
-const valueRangeUnitDays = {
-  ValueRange.day: 1,
-  ValueRange.week: 7,
-  ValueRange.month: 30,
-  ValueRange.year: 365,
-};
-
-const valueRangeCountOptions = {
-  ValueRange.day: [7, 15, 30],
-  ValueRange.week: [4, 8, 12],
-  ValueRange.month: [4, 8, 12],
-  ValueRange.year: [4, 8, 12],
-};
-
-const valueRangeDefaultCount = {
-  ValueRange.day: 7,
-  ValueRange.week: 4,
-  ValueRange.month: 4,
-  ValueRange.year: 4,
-};
+/// Fixed period count for the card-detail value chart: the current period
+/// plus the previous 11, for every range.
+const valueChartPeriods = 12;
 
 class ValueRepository {
   ValueRepository({Database Function()? dbOverride}) : _dbOverride = dbOverride;
@@ -114,41 +93,68 @@ class ValueRepository {
     return map;
   }
 
-  /// Buckets the sparse series into `count` fixed-width windows of
-  /// `range`'s unit size, oldest first, ending today. Each bucket's amount
-  /// is the mean of whatever entries fall inside it, or `null` if none —
-  /// callers must render a null bucket as a gap, never interpolated or
-  /// extrapolated, same invariant the old single-window `windowed()` had.
+  /// Buckets the sparse series into [valueChartPeriods] calendar-accurate
+  /// periods of `range`'s unit (day/calendar week/calendar month/calendar
+  /// year), oldest first, ending with the period containing `now`. Each
+  /// bucket's amount is the *latest* entry within it (this chart represents
+  /// value over time, so the last known price for a period beats an
+  /// average), or `null` if none fell inside it — callers must render a
+  /// null bucket as a gap, never interpolated or extrapolated.
   List<ValueBucket> buckets(
     List<ValueEntry> series,
-    ValueRange range,
-    int count, {
+    ValueRange range, {
     DateTime? now,
   }) {
-    final today = now ?? DateTime.now();
-    final unitDays = valueRangeUnitDays[range]!;
+    final today = ValueEntry.dateOnly(now ?? DateTime.now());
     final result = <ValueBucket>[];
-    for (var i = count - 1; i >= 0; i--) {
-      final end = today.subtract(Duration(days: unitDays * i));
-      final start = end.subtract(Duration(days: unitDays));
-      final inBucket = series.where(
-        (e) => e.date.isAfter(start) && !e.date.isAfter(end),
-      );
-      final amount = inBucket.isEmpty
-          ? null
-          : inBucket.fold<double>(0, (sum, e) => sum + e.amount) /
-                inBucket.length;
+    for (var i = valueChartPeriods - 1; i >= 0; i--) {
+      final start = _periodStart(range, today, i);
+      final end = _periodStart(range, today, i - 1);
+      ValueEntry? latest;
+      for (final e in series) {
+        if (!e.date.isBefore(start) &&
+            e.date.isBefore(end) &&
+            (latest == null || e.date.isAfter(latest.date))) {
+          latest = e;
+        }
+      }
       result.add(
         ValueBucket(
-          label: range == ValueRange.year
-              ? '${start.year}'
-              : formatShortDate(start),
+          label: _periodLabel(range, start),
           periodStart: start,
-          amount: amount,
+          amount: latest?.amount,
         ),
       );
     }
     return result;
+  }
+
+  /// The start of the period `periodsAgo` periods before the one containing
+  /// [today] (0 = today's own period).
+  DateTime _periodStart(ValueRange range, DateTime today, int periodsAgo) {
+    switch (range) {
+      case ValueRange.day:
+        return today.subtract(Duration(days: periodsAgo));
+      case ValueRange.week:
+        final weekStart = today.subtract(Duration(days: today.weekday - 1));
+        return weekStart.subtract(Duration(days: 7 * periodsAgo));
+      case ValueRange.month:
+        return DateTime(today.year, today.month - periodsAgo, 1);
+      case ValueRange.year:
+        return DateTime(today.year - periodsAgo, 1, 1);
+    }
+  }
+
+  String _periodLabel(ValueRange range, DateTime start) {
+    switch (range) {
+      case ValueRange.day:
+      case ValueRange.week:
+        return formatShortDate(start);
+      case ValueRange.month:
+        return formatMonthLabel(start);
+      case ValueRange.year:
+        return '${start.year}';
+    }
   }
 
   /// Delta between the latest entry and the nearest entry on or before

@@ -12,6 +12,9 @@ class Release {
   final int? totalCardsInSet;
   final ReleaseCategory category;
   final CardLanguage? language;
+  final String? landscapeCoverPath;
+  final String? portraitCoverPath;
+  final bool isFavorite;
 
   const Release({
     required this.id,
@@ -24,7 +27,18 @@ class Release {
     this.totalCardsInSet,
     this.category = ReleaseCategory.others,
     this.language,
+    this.landscapeCoverPath,
+    this.portraitCoverPath,
+    this.isFavorite = false,
   });
+
+  /// Landscape cover to display, falling back to the legacy single cover
+  /// image for folders that predate separate landscape/portrait covers.
+  String? get displayLandscapeCover => landscapeCoverPath ?? coverPhotoPath;
+
+  /// Portrait cover to display, falling back to the legacy single cover
+  /// image for folders that predate separate landscape/portrait covers.
+  String? get displayPortraitCover => portraitCoverPath ?? coverPhotoPath;
 
   Release copyWith({
     String? name,
@@ -36,6 +50,11 @@ class Release {
     ReleaseCategory? category,
     CardLanguage? language,
     bool clearLanguage = false,
+    String? landscapeCoverPath,
+    bool clearLandscapeCover = false,
+    String? portraitCoverPath,
+    bool clearPortraitCover = false,
+    bool? isFavorite,
   }) {
     return Release(
       id: id,
@@ -48,6 +67,13 @@ class Release {
       totalCardsInSet: totalCardsInSet ?? this.totalCardsInSet,
       category: category ?? this.category,
       language: clearLanguage ? null : (language ?? this.language),
+      landscapeCoverPath: clearLandscapeCover
+          ? null
+          : (landscapeCoverPath ?? this.landscapeCoverPath),
+      portraitCoverPath: clearPortraitCover
+          ? null
+          : (portraitCoverPath ?? this.portraitCoverPath),
+      isFavorite: isFavorite ?? this.isFavorite,
     );
   }
 
@@ -62,6 +88,9 @@ class Release {
     'totalCardsInSet': totalCardsInSet,
     'category': category.label,
     'language': language?.label,
+    'landscapeCoverPath': landscapeCoverPath,
+    'portraitCoverPath': portraitCoverPath,
+    'isFavorite': isFavorite ? 1 : 0,
   };
 
   factory Release.fromMap(Map<String, Object?> map) => Release(
@@ -75,5 +104,8 @@ class Release {
     totalCardsInSet: map['totalCardsInSet'] as int?,
     category: ReleaseCategory.fromLabel(map['category'] as String?),
     language: CardLanguage.fromLabel(map['language'] as String?),
+    landscapeCoverPath: map['landscapeCoverPath'] as String?,
+    portraitCoverPath: map['portraitCoverPath'] as String?,
+    isFavorite: (map['isFavorite'] as int? ?? 0) == 1,
   );
 }
