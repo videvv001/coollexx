@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'app_shell.dart';
 import 'state/app_state.dart';
+import 'state/ocr_settings.dart';
 import 'state/theme_controller.dart';
 import 'theme.dart';
 
@@ -20,6 +21,7 @@ class PokedexTcgApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => AppState()..load()),
         ChangeNotifierProvider(create: (_) => ThemeController()),
+        ChangeNotifierProvider(create: (_) => OcrSettings()),
       ],
       child: Consumer<ThemeController>(
         builder: (context, themeController, _) => MaterialApp(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../add_manual/add_manual_screen.dart';
 import '../capture/capture_screen.dart';
+import '../capture/capture_route.dart';
 
 /// 1d screen 8 — shown on Home before the first card exists anywhere.
 class EmptyFirstRunScreen extends StatelessWidget {
@@ -53,7 +54,10 @@ class EmptyFirstRunScreen extends StatelessWidget {
             FilledButton.icon(
               onPressed: () => Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const CaptureScreen()),
+                MaterialPageRoute(
+                  settings: const RouteSettings(name: captureRouteName),
+                  builder: (_) => const CaptureScreen(),
+                ),
               ),
               icon: const Icon(Icons.camera_alt),
               label: const Text('Scan a card'),

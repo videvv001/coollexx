@@ -11,7 +11,6 @@ import '../../state/app_state.dart';
 import '../shared/unsaved_capture_dialog.dart';
 import 'batch_triage_screen.dart';
 import 'camera_controller_mixin.dart';
-import 'capture_route.dart';
 import 'crop_retake_screen.dart';
 import 'live_framing.dart';
 import 'photo_preview_screen.dart';
@@ -81,6 +80,16 @@ class _CaptureScreenState extends State<CaptureScreen>
   double? _zoomGestureStart;
   bool _capturing = false;
 
+  // Tap-to-focus: `_previewKey` is what turns a tap's local position into a
+  // normalized (0-1) point for `setFocusPoint`/`setExposurePoint` — both
+  // expect that coordinate space, not pixels. `_focusPoint` only exists to
+  // draw the transient ring where the user tapped; it self-clears after a
+  // beat rather than tracking whether focus actually locked (the camera
+  // package doesn't expose that), so it's a tap acknowledgement, not a
+  // focus-confirmed indicator.
+  final _previewKey = GlobalKey();
+  Offset? _focusPoint;
+
   void _onScaleStart(ScaleStartDetails details) {
     _zoomGestureStart = currentZoom;
   }
@@ -89,6 +98,27 @@ class _CaptureScreenState extends State<CaptureScreen>
     final start = _zoomGestureStart;
     if (start == null) return;
     setZoom(start * details.scale);
+  }
+
+  Future<void> _onFocusTap(TapUpDetails details) async {
+    final controller = cameraController;
+    final box = _previewKey.currentContext?.findRenderObject() as RenderBox?;
+    if (controller == null || box == null) return;
+    final local = details.localPosition;
+    final point = Offset(
+      (local.dx / box.size.width).clamp(0.0, 1.0),
+      (local.dy / box.size.height).clamp(0.0, 1.0),
+    );
+    setState(() => _focusPoint = local);
+    try {
+      await controller.setFocusMode(FocusMode.auto);
+      await controller.setFocusPoint(point);
+      await controller.setExposurePoint(point);
+    } catch (_) {
+      // Tap-to-focus/exposure isn't supported on this device — ignore.
+    }
+    await Future.delayed(const Duration(milliseconds: 700));
+    if (mounted) setState(() => _focusPoint = null);
   }
 
   @override
@@ -246,7 +276,6 @@ class _CaptureScreenState extends State<CaptureScreen>
     Navigator.push(
       context,
       MaterialPageRoute(
-        settings: const RouteSettings(name: captureRouteName),
         builder: (_) => BatchTriageScreen(
           cardIds: cards.map((c) => c.id).toList(),
           boundReleaseId: widget.boundReleaseId,
@@ -289,7 +318,6 @@ class _CaptureScreenState extends State<CaptureScreen>
     Navigator.push(
       context,
       MaterialPageRoute(
-        settings: const RouteSettings(name: captureRouteName),
         builder: (_) => CropRetakeScreen(
           photoPath: path,
           side: _side,
@@ -403,8 +431,10 @@ class _CaptureScreenState extends State<CaptureScreen>
                         child: AspectRatio(
                           aspectRatio: 1 / cameraController!.value.aspectRatio,
                           child: GestureDetector(
+                            key: _previewKey,
                             onScaleStart: _onScaleStart,
                             onScaleUpdate: _onScaleUpdate,
+                            onTapUp: _onFocusTap,
                             child: Stack(
                               fit: StackFit.expand,
                               children: [
@@ -438,6 +468,12 @@ class _CaptureScreenState extends State<CaptureScreen>
                                   showReset: currentZoom > minZoomLevel + 0.01,
                                   onReset: resetZoom,
                                 ),
+                                if (_focusPoint != null)
+                                  Positioned(
+                                    left: _focusPoint!.dx - 32,
+                                    top: _focusPoint!.dy - 32,
+                                    child: const _FocusRing(),
+                                  ),
                                 if (_capturing)
                                   const ColoredBox(
                                     color: Colors.black26,
@@ -621,6 +657,32 @@ class _ZoomBadge extends StatelessWidget {
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Transient ring drawn where the user tapped to focus — a tap
+/// acknowledgement, not confirmation that focus actually locked (the
+/// `camera` package doesn't report that back).
+class _FocusRing extends StatelessWidget {
+  const _FocusRing();
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 1.3, end: 1.0),
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+      builder: (context, scale, child) =>
+          Transform.scale(scale: scale, child: child),
+      child: Container(
+        width: 64,
+        height: 64,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 1.5),
         ),
       ),
     );

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'models/capture_session.dart';
+import 'screens/capture/capture_route.dart';
 import 'screens/capture/capture_screen.dart';
 import 'screens/home/home_screen.dart';
 import 'screens/me/me_screen.dart';
@@ -90,6 +91,7 @@ class _AppShellState extends State<AppShell> {
     });
     _navigatorKeys[0].currentState?.push(
       MaterialPageRoute(
+        settings: const RouteSettings(name: captureRouteName),
         builder: (_) => CaptureScreen(
           resumeSessionId: active.id,
           boundReleaseId: active.targetReleaseId,

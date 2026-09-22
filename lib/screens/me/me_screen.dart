@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../state/app_state.dart';
+import '../../state/ocr_settings.dart';
 import '../../state/theme_controller.dart';
 
 /// The fourth tab. Not detailed in the design brief beyond its presence in
@@ -14,6 +15,7 @@ class MeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final themeController = context.watch<ThemeController>();
+    final ocrSettings = context.watch<OcrSettings>();
     return Scaffold(
       appBar: AppBar(title: const Text('Me')),
       body: ListView(
@@ -70,6 +72,20 @@ class MeScreen extends StatelessWidget {
                   ),
                 ],
               ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: SwitchListTile(
+              title: const Text('Auto-fill from photo (OCR)'),
+              subtitle: const Text(
+                'Suggests name, ID and language from the card photo when '
+                'scanning. Turn off if you mostly collect games this app '
+                "doesn't know the layout of — skips the category prompt too.",
+              ),
+              value: ocrSettings.enabled,
+              onChanged: (v) =>
+                  context.read<OcrSettings>().setEnabled(v),
             ),
           ),
           const SizedBox(height: 16),

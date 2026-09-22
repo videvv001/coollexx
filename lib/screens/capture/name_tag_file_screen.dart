@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../data/card_text_scan.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_language.dart';
 import '../../models/release_category.dart';
 import '../../models/tcg_card.dart';
 import '../../state/app_state.dart';
+import '../../state/ocr_settings.dart';
 import '../shared/card_category_fields.dart';
+import '../shared/category_prompt.dart';
 import 'capture_route.dart';
 
 /// 1c step 3 — Name, tag, file. The end of the guided-scan path: unlike
@@ -46,20 +49,80 @@ class _NameTagFileScreenState extends State<NameTagFileScreen> {
   DateTime? _datePaid;
   bool _forTrade = false;
   bool _onWishlist = false;
+  bool _scanning = false;
+  // Set from the category prompt when no bound release already answers the
+  // question — also used by `_category` below, so once picked it drives
+  // which fields CardCategoryFields shows too, not just the OCR heuristic.
+  ReleaseCategory? _ocrCategoryOverride;
 
   @override
   void initState() {
     super.initState();
     _releaseId = widget.boundReleaseId;
+    // Deferred a frame so the prompt dialog (if needed) has a built screen
+    // to anchor to.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _runOcr());
   }
 
-  ReleaseCategory _category(AppState state) {
-    if (_releaseId == null) return ReleaseCategory.others;
-    for (final r in state.releases) {
-      if (r.id == _releaseId) return r.category;
+  /// Prefills name/number/kind/language from on-device text recognition of
+  /// the front photo (see `scanCardText`) — purely a suggestion: it never
+  /// overwrites a field the user already touched while the scan was
+  /// running. Skipped entirely if OCR is turned off, or if the card turns
+  /// out to be a category this app doesn't know the layout of.
+  Future<void> _runOcr() async {
+    if (widget.photoPaths.isEmpty) return;
+    final settings = context.read<OcrSettings>();
+    if (!settings.enabled) return;
+    final state = context.read<AppState>();
+
+    var category = _knownCategory(state);
+    if (category == null) {
+      if (!mounted) return;
+      category = await pickOcrCategory(context) ?? ReleaseCategory.others;
+      if (!mounted) return;
+      setState(() => _ocrCategoryOverride = category);
     }
-    return ReleaseCategory.others;
+    if (category == ReleaseCategory.others) return;
+
+    setState(() => _scanning = true);
+    final guess = await scanCardText(widget.photoPaths.first, category);
+    if (!mounted) return;
+    setState(() {
+      _scanning = false;
+      if (_nameController.text.trim().isEmpty && guess.name != null) {
+        _nameController.text = guess.name!;
+      }
+      if (_numberController.text.trim().isEmpty && guess.number != null) {
+        _numberController.text = guess.number!;
+      }
+      if (_kind == null && guess.kind != null) {
+        _kind = guess.kind;
+      }
+      if (_language == null && guess.language != null) {
+        _language = guess.language;
+      }
+    });
   }
+
+  /// The category a bound release *confidently* tells us — null means
+  /// "ask" (see `_runOcr`). Only Pokémon/One Piece count: `others` is also
+  /// what a release gets when nobody ever picked a category (it's the
+  /// silent default at creation and the fallback for a missing value), so
+  /// treating it as an answer would mean never scanning, and never asking
+  /// either. `_category` below is the version the rest of the form uses,
+  /// which falls back to the prompt's answer.
+  ReleaseCategory? _knownCategory(AppState state) {
+    if (_releaseId == null) return null;
+    for (final r in state.releases) {
+      if (r.id == _releaseId) {
+        return r.category == ReleaseCategory.others ? null : r.category;
+      }
+    }
+    return null;
+  }
+
+  ReleaseCategory _category(AppState state) =>
+      _knownCategory(state) ?? _ocrCategoryOverride ?? ReleaseCategory.others;
 
   Future<void> _pickDatePaid() async {
     final picked = await showDatePicker(
@@ -101,14 +164,17 @@ class _NameTagFileScreenState extends State<NameTagFileScreen> {
   Future<void> _save(AppState state) async {
     await _buildAndSave(state);
     if (!mounted) return;
-    Navigator.of(context).popUntil(ModalRoute.withName(captureRouteName));
-    Navigator.of(context).pop();
+    popCaptureFlow(context, exit: true);
   }
 
   Future<void> _saveAndNew(AppState state) async {
     await _buildAndSave(state);
     if (!mounted) return;
-    Navigator.of(context).popUntil(ModalRoute.withName(captureRouteName));
+    // Reached straight from a folder's gallery upload there's no camera
+    // behind this screen to go back to for a "new" card, so leave instead
+    // of sitting on a filled-in form that would save the same photo twice.
+    final atEntry = ModalRoute.of(context)?.settings.name == captureRouteName;
+    popCaptureFlow(context, exit: atEntry);
   }
 
   @override
@@ -133,6 +199,21 @@ class _NameTagFileScreenState extends State<NameTagFileScreen> {
             onChanged: (v) => setState(() => _releaseId = v),
           ),
           const SizedBox(height: 12),
+          if (_scanning)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 8),
+                  Text('Scanning card…'),
+                ],
+              ),
+            ),
           CardCategoryFields(
             category: _category(state),
             idController: _numberController,

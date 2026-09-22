@@ -61,8 +61,7 @@ class _AssignReleaseScreenState extends State<AssignReleaseScreen> {
       clearRelease: _releaseId == null,
     );
     if (!mounted) return;
-    Navigator.of(context).popUntil(ModalRoute.withName(captureRouteName));
-    Navigator.of(context).pop();
+    popCaptureFlow(context, exit: true);
   }
 
   @override

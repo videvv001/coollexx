@@ -26,10 +26,20 @@ List<MetadataField> _pokemonFields(TcgCard card, Release? release) {
   return [
     MetadataField('ID', id),
     MetadataField('RELEASE / LANGUAGE', _releaseLanguage(card, release)),
+    MetadataField('KIND', card.kind ?? _dash),
     MetadataField('RARITY / TYPE', '${card.rarity ?? _dash} / ${card.type ?? _dash}'),
     MetadataField('CONDITION', card.condition?.label ?? _dash),
   ];
 }
+
+List<MetadataField> _onePieceFields(TcgCard card, Release? release) => [
+  MetadataField('ID', card.number ?? _dash),
+  MetadataField('RELEASE / LANGUAGE', _releaseLanguage(card, release)),
+  MetadataField('KIND', card.kind ?? _dash),
+  MetadataField('COLOR', card.color ?? _dash),
+  MetadataField('RARITY', card.rarity ?? _dash),
+  MetadataField('CONDITION', card.condition?.label ?? _dash),
+];
 
 List<MetadataField> _oneColumnRarityFields(TcgCard card, Release? release) => [
   MetadataField('ID', card.number ?? _dash),
@@ -40,11 +50,10 @@ List<MetadataField> _oneColumnRarityFields(TcgCard card, Release? release) => [
 
 /// Category → metadata template. Adding a new category (Yu-Gi-Oh!, Magic,
 /// Sports, ...) is a new map entry here, not a new branch scattered through
-/// the UI. `others` shares One Piece's layout for now (see project spec) —
-/// give it its own builder here when it needs one.
+/// the UI.
 const _fieldBuilders = <ReleaseCategory, _FieldBuilder>{
   ReleaseCategory.pokemon: _pokemonFields,
-  ReleaseCategory.onePiece: _oneColumnRarityFields,
+  ReleaseCategory.onePiece: _onePieceFields,
   ReleaseCategory.others: _oneColumnRarityFields,
 };
 

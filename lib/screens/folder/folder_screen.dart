@@ -1,13 +1,20 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
+import '../../data/photo_store.dart';
 import '../../models/release.dart';
+import '../../models/release_category.dart';
 import '../../models/tcg_card.dart';
 import '../../state/app_state.dart';
 import '../../widgets/photo_placeholder.dart';
 import '../add_manual/add_manual_screen.dart';
+import '../capture/batch_triage_screen.dart';
+import '../capture/capture_route.dart';
 import '../capture/capture_screen.dart';
 import '../capture/live_framing.dart';
 import '../capture/name_tag_file_screen.dart';
@@ -57,6 +64,7 @@ class FolderScreen extends StatefulWidget {
 }
 
 class _FolderScreenState extends State<FolderScreen> {
+  static const _uuid = Uuid();
   _ViewMode _view = _ViewMode.grid;
   bool _selectMode = false;
   final Set<String> _selected = {};
@@ -154,6 +162,7 @@ class _FolderScreenState extends State<FolderScreen> {
         Navigator.push(
           context,
           MaterialPageRoute(
+            settings: const RouteSettings(name: captureRouteName),
             builder: (_) => CaptureScreen(boundReleaseId: widget.releaseId),
           ),
         );
@@ -172,29 +181,64 @@ class _FolderScreenState extends State<FolderScreen> {
     }
   }
 
-  /// Gallery image → the same crop editor covers use → the same
-  /// name/tag/file screen the guided camera scan ends on, pre-filed into
-  /// this folder. Reuses the existing image picker, crop and collection
-  /// creation flow rather than building a second version of any of them.
+  /// Gallery image(s), pre-filed into this folder. One pick keeps the
+  /// per-card path — crop editor, then the same name/tag/file screen the
+  /// guided camera scan ends on. Several picks route to batch triage
+  /// instead, the same screen a burst lands on: cropping and naming a
+  /// dozen cards one modal at a time is the thing triage exists to avoid.
+  /// Both destinations already run OCR autofill, so neither needs its own.
   Future<void> _uploadImage() async {
-    final file = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (file == null || !mounted) return;
-    final cropped = await Navigator.push<String>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => PhotoEditorScreen(
-          sourcePath: file.path,
-          aspectRatio: kCardAspect,
-          title: 'Crop photo',
+    final files = await ImagePicker().pickMultiImage();
+    if (files.isEmpty || !mounted) return;
+
+    if (files.length == 1) {
+      final cropped = await Navigator.push<String>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PhotoEditorScreen(
+            sourcePath: files.first.path,
+            aspectRatio: kCardAspect,
+            title: 'Crop photo',
+          ),
         ),
-      ),
-    );
-    if (cropped == null || !mounted) return;
+      );
+      if (cropped == null || !mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          settings: const RouteSettings(name: captureRouteName),
+          builder: (_) => NameTagFileScreen(
+            photoPaths: [cropped],
+            boundReleaseId: widget.releaseId,
+          ),
+        ),
+      );
+      return;
+    }
+
+    final state = context.read<AppState>();
+    final cardIds = <String>[];
+    for (final file in files) {
+      // Copied into the app's own storage rather than referencing the
+      // picker's temp path, which the OS is free to reap.
+      final saved = await PhotoStore.instance.save(File(file.path));
+      final card = await state.addCard(
+        TcgCard(
+          id: _uuid.v4(),
+          photoPaths: [saved],
+          releaseId: widget.releaseId,
+          createdAt: DateTime.now(),
+        ),
+      );
+      cardIds.add(card.id);
+    }
+    if (!mounted) return;
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => NameTagFileScreen(
-          photoPaths: [cropped],
+        settings: const RouteSettings(name: captureRouteName),
+        builder: (_) => BatchTriageScreen(
+          cardIds: cardIds,
           boundReleaseId: widget.releaseId,
         ),
       ),
@@ -206,25 +250,46 @@ class _FolderScreenState extends State<FolderScreen> {
     if (release == null) return;
     if (!mounted) return;
     final controller = TextEditingController(text: release.name);
+    var category = release.category;
     final name = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Rename release'),
-        content: TextField(controller: controller, autofocus: true),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Rename release'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: controller, autofocus: true),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<ReleaseCategory>(
+                initialValue: category,
+                decoration: const InputDecoration(labelText: 'Category'),
+                items: [
+                  for (final c in ReleaseCategory.values)
+                    DropdownMenuItem(value: c, child: Text(c.label)),
+                ],
+                onChanged: (v) =>
+                    setDialogState(() => category = v ?? category),
+              ),
+            ],
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('Save'),
-          ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
       ),
     );
     if (name != null && name.isNotEmpty) {
-      await state.collection.updateRelease(release.copyWith(name: name));
+      await state.collection.updateRelease(
+        release.copyWith(name: name, category: category),
+      );
       await state.refresh();
       setState(() {});
     }
@@ -931,6 +996,7 @@ class _EmptyFolder extends StatelessWidget {
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(
+                settings: const RouteSettings(name: captureRouteName),
                 builder: (_) => CaptureScreen(boundReleaseId: releaseId),
               ),
             ),

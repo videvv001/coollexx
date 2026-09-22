@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../data/card_text_scan.dart';
+import '../../models/release_category.dart';
 import '../../models/tcg_card.dart';
 import '../../state/app_state.dart';
+import '../../state/ocr_settings.dart';
 import '../../widgets/photo_placeholder.dart';
+import '../shared/category_prompt.dart';
 import '../shared/confirm_dialog.dart';
 import 'assign_release_screen.dart';
 import 'photo_preview_screen.dart';
@@ -37,6 +41,7 @@ class BatchTriageScreen extends StatefulWidget {
 class _BatchTriageScreenState extends State<BatchTriageScreen> {
   List<TcgCard> _cards = [];
   bool _loading = true;
+  final Set<String> _scanning = {};
 
   @override
   void initState() {
@@ -58,6 +63,94 @@ class _BatchTriageScreenState extends State<BatchTriageScreen> {
     }
     if (!mounted) return;
     setState(() => _loading = false);
+    _autoFillOcr(state);
+  }
+
+  /// The category a card's own (or the batch's bound) release
+  /// *confidently* tells us — null means the batch-wide prompt in
+  /// `_autoFillOcr` answers it instead. Only Pokémon/One Piece count:
+  /// `others` is also what a release gets when nobody ever picked a
+  /// category (the silent default at creation, and the fallback for a
+  /// missing value), so treating it as an answer would mean scanning into
+  /// such a folder never autofills and never even asks.
+  ReleaseCategory? _knownCategoryFor(AppState state, TcgCard card) {
+    final releaseId = card.releaseId ?? widget.boundReleaseId;
+    if (releaseId == null) return null;
+    for (final r in state.releases) {
+      if (r.id == releaseId) {
+        return r.category == ReleaseCategory.others ? null : r.category;
+      }
+    }
+    return null;
+  }
+
+  TcgCard? _findCard(String id) {
+    for (final c in _cards) {
+      if (c.id == id) return c;
+    }
+    return null;
+  }
+
+  /// Runs OCR over every still-untitled card, one at a time, filling in
+  /// name/number/language as each scan resolves — the same suggestion-only
+  /// prefill the guided scan flow does, just applied to a whole
+  /// burst/unsorted-tray batch instead of one card at a time. Re-checks the
+  /// card right before writing back so a bin or a manual edit made while a
+  /// scan was still in flight is never clobbered.
+  ///
+  /// Cards whose category can't already be told from a release are asked
+  /// about at most once for the whole batch — see `pickOcrCategory` — not
+  /// once per card, since that'd mean answering the same question dozens of
+  /// times during a big burst.
+  Future<void> _autoFillOcr(AppState state) async {
+    if (!context.read<OcrSettings>().enabled) return;
+    final ids = _cards
+        .where((c) => c.isUntitled && c.thumbnailPath != null)
+        .map((c) => c.id)
+        .toList();
+    if (ids.isEmpty) return;
+
+    ReleaseCategory? promptedCategory;
+    var asked = false;
+
+    for (final id in ids) {
+      final target = _findCard(id);
+      if (target == null || !target.isUntitled || target.thumbnailPath == null) {
+        continue;
+      }
+
+      var category = _knownCategoryFor(state, target);
+      if (category == null) {
+        if (!asked) {
+          asked = true;
+          if (!mounted) return;
+          promptedCategory = await pickOcrCategory(context);
+        }
+        category = promptedCategory ?? ReleaseCategory.others;
+      }
+      if (category == ReleaseCategory.others) continue;
+
+      if (!mounted) return;
+      setState(() => _scanning.add(id));
+      final guess = await scanCardText(target.thumbnailPath!, category);
+      if (!mounted) return;
+      setState(() => _scanning.remove(id));
+      if (guess.name == null && guess.number == null && guess.language == null) {
+        continue;
+      }
+
+      final latest = _findCard(id);
+      if (latest == null || !latest.isUntitled) continue;
+      final updated = latest.copyWith(
+        name: guess.name,
+        number: guess.number,
+        language: guess.language,
+      );
+      await state.updateCard(updated);
+      if (!mounted) return;
+      final idx = _cards.indexWhere((c) => c.id == id);
+      if (idx != -1) setState(() => _cards[idx] = updated);
+    }
   }
 
   Future<void> _editRow(AppState state, TcgCard card) async {
@@ -234,7 +327,11 @@ class _BatchTriageScreenState extends State<BatchTriageScreen> {
                     ),
                   ),
                   title: Text(
-                    card.isUntitled ? 'untitled — tap to name' : card.name!,
+                    card.isUntitled
+                        ? (_scanning.contains(card.id)
+                              ? 'Scanning…'
+                              : 'untitled — tap to name')
+                        : card.name!,
                   ),
                   subtitle: Text(
                     [

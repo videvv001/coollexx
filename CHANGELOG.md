@@ -5,6 +5,69 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-09-23
+
+### Added
+- Guided card scan and Quick burst/unsorted-tray triage now prefill
+  name/number/language (and One Piece kind) from on-device text recognition
+  of the card photo — runs entirely on the phone, no server involved, reads
+  both Latin and Japanese print, and the fields stay editable so it's only
+  ever a starting suggestion.
+- Scanning a card whose category can't already be told from a bound release
+  now asks once (Pokémon / One Piece / Others) so OCR knows where on the
+  card to look; picking Others just skips the auto-fill for that card/batch.
+- New "Auto-fill from photo (OCR)" toggle on the Me tab to turn scanning
+  (and its category prompt) off entirely for collectors of other games.
+- Uploading from a folder now takes multiple images at once. A single pick
+  still goes through crop → name & file; several go to batch triage, the
+  same screen a burst lands on, pre-filed into that folder. Both ends
+  already run OCR autofill, so gallery uploads get it in either place.
+- Tap-to-focus on the camera preview (both Quick burst and Guided scan) —
+  sets focus and exposure to the tapped point, with a brief ring where you
+  tapped. Silently no-ops on devices that don't support it.
+
+### Changed
+- The shared photo editor (card photos, release covers, and the crop/retake
+  step in capture) now has separate rotate-left and rotate-right buttons
+  instead of a single clockwise-only rotate.
+
+### Fixed
+- Card detail/preview now shows Kind for Pokémon and One Piece cards, and
+  Color for One Piece cards — those fields are captured on add and editable
+  from Edit card, but were silently missing from the preview grid.
+- Rotating or saving a photo in the shared editor no longer freezes the app:
+  the JPEG decode/rotate/crop/encode work (slow in pure Dart on a full-res
+  camera photo) now runs on a background isolate instead of blocking the UI
+  thread, so the spinner actually animates and the screen stays responsive
+  while it works.
+- Finishing a sort no longer drops you on a black screen: assigning the
+  unsorted tray to a release (and saving a gallery upload from a folder)
+  popped every route off the tab's navigator, because the route name the
+  capture flow pops back to only existed when the flow started at the
+  camera. Capture flows now all mark their entry route, and the pop stops
+  at the tab root if one is ever missed.
+- OCR no longer mistakes a card's kind banner, trait line or effect text
+  for its name. A card's lower portion stacks kind / name / trait / ID, so
+  "text near the bottom" was never enough — the name is now identified by
+  its relationship to the kind banner (the block directly beneath it),
+  with effect prose, IDs and kind labels ruled out first. Kind labels come
+  from the app's existing `CardFieldOptions.kind` list rather than a
+  second list kept in the scanner, and an ambiguous read now reports no
+  name instead of guessing. Covered by `test/card_text_layout_test.dart`.
+- Scanning into a folder no longer silently skips OCR. A release's category
+  of "Others" was being treated as a definitive "don't autofill", but it's
+  also what every release gets when nobody picked a category, so scanning
+  inside such a folder neither autofilled nor asked — while the same scan
+  outside a folder worked. Only Pokémon/One Piece now count as a definitive
+  answer; anything else falls back to the category prompt.
+- Folder Category is now editable from both "Edit folder" on My Collection
+  and the folder's own rename dialog, so a folder created without picking
+  one (it silently defaulted to "Others") can be corrected — and set once,
+  it stops the prompt asking again.
+- Gallery uploads now copy the picked image into the app's own storage
+  instead of pointing at the picker's temp file, which the OS can delete
+  out from under a saved card.
+
 ## [1.3.0] - 2026-09-21
 
 ### Added

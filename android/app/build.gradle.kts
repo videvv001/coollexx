@@ -46,8 +46,19 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
+}
+
+dependencies {
+    // google_mlkit_text_recognition only bundles the Latin model by
+    // default; Pokémon/One Piece cards are frequently Japanese prints, so
+    // the OCR scan (see lib/data/card_text_scan.dart) also needs this.
+    implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
 }
 
 flutter {

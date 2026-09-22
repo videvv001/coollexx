@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
@@ -42,6 +43,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   final _transformController = TransformationController();
   Size? _viewportSize;
   bool _saving = false;
+  bool _rotating = false;
   bool _loadError = false;
   bool _centered = false; // hides the viewer until the initial fit is set
 
@@ -53,15 +55,18 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
 
   Future<void> _load() async {
     final bytes = await File(widget.sourcePath).readAsBytes();
-    final decoded = img.decodeImage(bytes);
+    // Pure-Dart JPEG decode/encode is CPU-heavy enough on a full-res camera
+    // photo to freeze the UI thread for seconds, so it runs on a worker
+    // isolate via compute() rather than inline here.
+    final result = await compute(_decodeAndEncode, bytes);
     if (!mounted) return;
-    if (decoded == null) {
+    if (result == null) {
       setState(() => _loadError = true);
       return;
     }
     setState(() {
-      _image = decoded;
-      _displayBytes = img.encodeJpg(decoded, quality: 92);
+      _image = result.image;
+      _displayBytes = result.jpg;
     });
   }
 
@@ -81,14 +86,17 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     if (!_centered) setState(() => _centered = true);
   }
 
-  Future<void> _rotate() async {
+  Future<void> _rotate(int degrees) async {
     final image = _image;
-    if (image == null) return;
-    final rotated = img.copyRotate(image, angle: 90);
+    if (image == null || _rotating || _saving) return;
+    setState(() => _rotating = true);
+    final result = await compute(_rotateAndEncode, (image, degrees));
+    if (!mounted) return;
     setState(() {
-      _image = rotated;
-      _displayBytes = img.encodeJpg(rotated, quality: 92);
+      _image = result.image;
+      _displayBytes = result.jpg;
       _centered = false;
+      _rotating = false;
     });
     // Wait a frame so the new AspectRatio/viewport (unchanged, but the
     // image's own w/h swapped) is laid out before re-centering against it.
@@ -104,7 +112,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   Future<void> _save() async {
     final image = _image;
     final viewport = _viewportSize;
-    if (image == null || viewport == null || _saving) return;
+    if (image == null || viewport == null || _saving || _rotating) return;
     setState(() => _saving = true);
 
     final inverse = Matrix4.inverted(_transformController.value);
@@ -122,17 +130,16 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
         .clamp(1, image.height - y)
         .round();
 
-    final cropped = img.copyCrop(
-      image,
-      x: x,
-      y: y,
-      width: math.max(1, w),
-      height: math.max(1, h),
+    // Crop + JPEG-encode is the same CPU-heavy pure-Dart codec work as
+    // decode/rotate, so it also runs off the UI isolate.
+    final jpgBytes = await compute(
+      _cropAndEncodeJpg,
+      (image, x, y, math.max(1, w), math.max(1, h)),
     );
 
     final dir = await getTemporaryDirectory();
     final outFile = File(p.join(dir.path, '${const Uuid().v4()}.jpg'));
-    await outFile.writeAsBytes(img.encodeJpg(cropped, quality: 90));
+    await outFile.writeAsBytes(jpgBytes);
     final savedPath = await PhotoStore.instance.save(outFile);
 
     if (!mounted) return;
@@ -149,7 +156,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
         title: Text(widget.title),
         actions: [
           TextButton(
-            onPressed: _image == null || _saving ? null : _save,
+            onPressed: _image == null || _saving || _rotating ? null : _save,
             child: _saving
                 ? const SizedBox(
                     width: 16,
@@ -233,12 +240,23 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 TextButton.icon(
-                  onPressed: _image == null ? null : _rotate,
-                  icon: const Icon(Icons.rotate_90_degrees_ccw, color: Colors.white),
-                  label: const Text('Rotate', style: TextStyle(color: Colors.white)),
+                  onPressed: _image == null || _rotating || _saving
+                      ? null
+                      : () => _rotate(-90),
+                  icon: const Icon(Icons.rotate_left, color: Colors.white),
+                  label: const Text('Rotate left', style: TextStyle(color: Colors.white)),
                 ),
                 TextButton.icon(
-                  onPressed: _image == null ? null : _centerAndFit,
+                  onPressed: _image == null || _rotating || _saving
+                      ? null
+                      : () => _rotate(90),
+                  icon: const Icon(Icons.rotate_right, color: Colors.white),
+                  label: const Text('Rotate right', style: TextStyle(color: Colors.white)),
+                ),
+                TextButton.icon(
+                  onPressed: _image == null || _rotating || _saving
+                      ? null
+                      : _centerAndFit,
                   icon: const Icon(Icons.filter_center_focus, color: Colors.white),
                   label: const Text('Recenter', style: TextStyle(color: Colors.white)),
                 ),
@@ -249,4 +267,34 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       ),
     );
   }
+}
+
+/// Result of decoding (or rotating) a photo: the pixel buffer used for crop
+/// math plus its already-encoded JPEG bytes for `Image.memory` display.
+class _DecodedPhoto {
+  const _DecodedPhoto(this.image, this.jpg);
+  final img.Image image;
+  final Uint8List jpg;
+}
+
+// Top-level functions below run via compute() on a worker isolate — decode,
+// rotate and encode of a full-resolution photo are CPU-heavy pure-Dart codec
+// work that would otherwise block the UI thread for seconds.
+
+_DecodedPhoto? _decodeAndEncode(Uint8List bytes) {
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null) return null;
+  return _DecodedPhoto(decoded, img.encodeJpg(decoded, quality: 92));
+}
+
+_DecodedPhoto _rotateAndEncode((img.Image, int) args) {
+  final (image, degrees) = args;
+  final rotated = img.copyRotate(image, angle: degrees);
+  return _DecodedPhoto(rotated, img.encodeJpg(rotated, quality: 92));
+}
+
+Uint8List _cropAndEncodeJpg((img.Image, int, int, int, int) args) {
+  final (image, x, y, w, h) = args;
+  final cropped = img.copyCrop(image, x: x, y: y, width: w, height: h);
+  return img.encodeJpg(cropped, quality: 90);
 }

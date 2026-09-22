@@ -1,9 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../data/photo_store.dart';
 import '../../models/card_language.dart';
 import '../../models/release.dart';
 import '../../models/release_category.dart';
@@ -11,6 +14,7 @@ import '../../models/tcg_card.dart';
 import '../../state/app_state.dart';
 import '../../widgets/photo_placeholder.dart';
 import '../capture/batch_triage_screen.dart';
+import '../capture/capture_route.dart';
 import '../capture/capture_screen.dart';
 import '../folder/folder_screen.dart';
 import '../search/search_screen.dart';
@@ -191,6 +195,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _editRelease(AppState state, Release release) async {
     final controller = TextEditingController(text: release.name);
+    var category = release.category;
     var language = release.language;
     var landscapePath = release.displayLandscapeCover;
     var portraitPath = release.displayPortraitCover;
@@ -261,6 +266,17 @@ class _HomeScreenState extends State<HomeScreen> {
                   decoration: const InputDecoration(labelText: 'Name'),
                 ),
                 const SizedBox(height: 12),
+                DropdownButtonFormField<ReleaseCategory>(
+                  initialValue: category,
+                  decoration: const InputDecoration(labelText: 'Category'),
+                  items: [
+                    for (final c in ReleaseCategory.values)
+                      DropdownMenuItem(value: c, child: Text(c.label)),
+                  ],
+                  onChanged: (v) =>
+                      setDialogState(() => category = v ?? category),
+                ),
+                const SizedBox(height: 12),
                 DropdownButtonFormField<CardLanguage?>(
                   initialValue: language,
                   decoration: const InputDecoration(labelText: 'Language'),
@@ -295,6 +311,7 @@ class _HomeScreenState extends State<HomeScreen> {
     await state.collection.updateRelease(
       release.copyWith(
         name: name,
+        category: category,
         language: language,
         clearLanguage: language == null,
         landscapeCoverPath: landscapePath,
@@ -375,19 +392,21 @@ class _HomeScreenState extends State<HomeScreen> {
     // here, the whole batch is already picked in one step.
     final cardIds = <String>[];
     for (final file in files) {
+      // Copied into the app's own storage rather than referencing the
+      // picker's temp path, which the OS is free to reap.
+      final saved = await PhotoStore.instance.save(File(file.path));
       final card = await state.addCard(
-        TcgCard(
-          id: _uuid.v4(),
-          photoPaths: [file.path],
-          createdAt: DateTime.now(),
-        ),
+        TcgCard(id: _uuid.v4(), photoPaths: [saved], createdAt: DateTime.now()),
       );
       cardIds.add(card.id);
     }
     if (!mounted) return;
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => BatchTriageScreen(cardIds: cardIds)),
+      MaterialPageRoute(
+        settings: const RouteSettings(name: captureRouteName),
+        builder: (_) => BatchTriageScreen(cardIds: cardIds),
+      ),
     );
   }
 
@@ -450,7 +469,10 @@ class _HomeScreenState extends State<HomeScreen> {
       case _AddAction.takePhoto:
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const CaptureScreen()),
+          MaterialPageRoute(
+            settings: const RouteSettings(name: captureRouteName),
+            builder: (_) => const CaptureScreen(),
+          ),
         );
         break;
       case _AddAction.uploadGallery:
@@ -767,6 +789,7 @@ class _UnsortedTrayBanner extends StatelessWidget {
           Navigator.push(
             context,
             MaterialPageRoute(
+              settings: const RouteSettings(name: captureRouteName),
               builder: (_) => const CaptureScreen(startAtUnsortedTray: true),
             ),
           );
@@ -802,6 +825,7 @@ class _UnsortedTrayBanner extends StatelessWidget {
                 onPressed: () => Navigator.push(
                   context,
                   MaterialPageRoute(
+                    settings: const RouteSettings(name: captureRouteName),
                     builder: (_) =>
                         const CaptureScreen(startAtUnsortedTray: true),
                   ),
