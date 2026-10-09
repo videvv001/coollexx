@@ -1,5 +1,6 @@
 import 'card_condition.dart';
 import 'card_language.dart';
+import 'printing_variant.dart';
 
 /// A single collected card. Named `TcgCard` to avoid colliding with
 /// Flutter's own `Card` widget.
@@ -7,7 +8,11 @@ class TcgCard {
   final String id;
   final String? name;
   final String? number;
-  final String? rarity;
+  final String? rarity; // official printed rarity, e.g. SEC
+
+  /// Which physical printing this is. [PrintingVariant.unknown] until it has
+  /// been recognised or set — not the same as base.
+  final PrintingVariant variant;
   final CardLanguage? language;
   final String? kind; // One Piece / Pokémon only
   final String? color; // One Piece only
@@ -29,6 +34,7 @@ class TcgCard {
     this.name,
     this.number,
     this.rarity,
+    this.variant = PrintingVariant.unknown,
     this.language,
     this.kind,
     this.color,
@@ -54,6 +60,7 @@ class TcgCard {
     String? name,
     String? number,
     String? rarity,
+    PrintingVariant? variant,
     CardLanguage? language,
     bool clearLanguage = false,
     String? kind,
@@ -80,6 +87,7 @@ class TcgCard {
       name: name ?? this.name,
       number: number ?? this.number,
       rarity: rarity ?? this.rarity,
+      variant: variant ?? this.variant,
       language: clearLanguage ? null : (language ?? this.language),
       kind: clearKind ? null : (kind ?? this.kind),
       color: clearColor ? null : (color ?? this.color),
@@ -103,6 +111,9 @@ class TcgCard {
     'name': name,
     'number': number,
     'rarity': rarity,
+    'variantFamily': variant.family.code,
+    'variantName': variant.name,
+    'artworkVariant': variant.artwork,
     'language': language?.label,
     'kind': kind,
     'color': color,
@@ -125,6 +136,12 @@ class TcgCard {
     name: map['name'] as String?,
     number: map['number'] as String?,
     rarity: map['rarity'] as String?,
+    // NULL (rows from before v7) reads as unknown, never as base.
+    variant: PrintingVariant(
+      family: VariantFamily.fromCode(map['variantFamily'] as String?),
+      name: map['variantName'] as String?,
+      artwork: map['artworkVariant'] as String?,
+    ),
     language: CardLanguage.fromLabel(map['language'] as String?),
     kind: map['kind'] as String?,
     color: map['color'] as String?,

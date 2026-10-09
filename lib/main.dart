@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'app_shell.dart';
+import 'state/ai_settings.dart';
 import 'state/app_state.dart';
 import 'state/ocr_settings.dart';
 import 'state/theme_controller.dart';
@@ -22,10 +23,11 @@ class PokedexTcgApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AppState()..load()),
         ChangeNotifierProvider(create: (_) => ThemeController()),
         ChangeNotifierProvider(create: (_) => OcrSettings()),
+        ChangeNotifierProvider(create: (_) => AiSettings()),
       ],
       child: Consumer<ThemeController>(
         builder: (context, themeController, _) => MaterialApp(
-          title: 'Pokédex TCG Collection',
+          title: 'TCGX',
           debugShowCheckedModeBanner: false,
           theme: buildAppTheme(Brightness.light),
           darkTheme: buildAppTheme(Brightness.dark),

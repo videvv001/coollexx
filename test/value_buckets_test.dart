@@ -21,11 +21,23 @@ void main() {
   test('month bucket uses the latest entry in that calendar month', () {
     final entries = [
       ValueEntry(id: '1', cardId: 'c', date: DateTime(2026, 1, 5), amount: 100),
-      ValueEntry(id: '2', cardId: 'c', date: DateTime(2026, 1, 12), amount: 120),
-      ValueEntry(id: '3', cardId: 'c', date: DateTime(2026, 1, 28), amount: 150),
+      ValueEntry(
+        id: '2',
+        cardId: 'c',
+        date: DateTime(2026, 1, 12),
+        amount: 120,
+      ),
+      ValueEntry(
+        id: '3',
+        cardId: 'c',
+        date: DateTime(2026, 1, 28),
+        amount: 150,
+      ),
     ];
     final buckets = repo.buckets(entries, ValueRange.month, now: now);
-    final jan = buckets.firstWhere((b) => b.periodStart == DateTime(2026, 1, 1));
+    final jan = buckets.firstWhere(
+      (b) => b.periodStart == DateTime(2026, 1, 1),
+    );
     expect(jan.amount, 150);
   });
 
@@ -34,17 +46,26 @@ void main() {
       ValueEntry(id: '1', cardId: 'c', date: DateTime(2026, 1, 5), amount: 100),
     ];
     final buckets = repo.buckets(entries, ValueRange.month, now: now);
-    final feb = buckets.firstWhere((b) => b.periodStart == DateTime(2026, 2, 1));
+    final feb = buckets.firstWhere(
+      (b) => b.periodStart == DateTime(2026, 2, 1),
+    );
     expect(feb.amount, isNull);
   });
 
   test('year bucket spans the whole calendar year', () {
     final entries = [
       ValueEntry(id: '1', cardId: 'c', date: DateTime(2024, 3, 1), amount: 10),
-      ValueEntry(id: '2', cardId: 'c', date: DateTime(2024, 12, 31), amount: 20),
+      ValueEntry(
+        id: '2',
+        cardId: 'c',
+        date: DateTime(2024, 12, 31),
+        amount: 20,
+      ),
     ];
     final buckets = repo.buckets(entries, ValueRange.year, now: now);
-    final y2024 = buckets.firstWhere((b) => b.periodStart == DateTime(2024, 1, 1));
+    final y2024 = buckets.firstWhere(
+      (b) => b.periodStart == DateTime(2024, 1, 1),
+    );
     expect(y2024.amount, 20);
   });
 

@@ -265,7 +265,8 @@ String? _findNumber(List<OcrBlock> blocks, ReleaseCategory category) {
     ReleaseCategory.onePiece => _onePieceIdPattern,
     _ => _pokemonNumberPattern,
   };
-  final match = _firstMatch(blocks, pattern, region) ??
+  final match =
+      _firstMatch(blocks, pattern, region) ??
       // "Others" has no known layout, so either format is fair game.
       (category == ReleaseCategory.others
           ? _firstMatch(blocks, _onePieceIdPattern, const _Band())
@@ -316,8 +317,9 @@ bool _isBetterReading(OcrBlock candidate, OcrBlock current) {
   final currentCjk = _cjkPattern.hasMatch(current.text);
   // A CJK reading of a CJK line beats the Latin pass's attempt at it.
   if (candidateCjk != currentCjk) return candidateCjk;
-  final byConfidence =
-      (candidate.confidence ?? 0).compareTo(current.confidence ?? 0);
+  final byConfidence = (candidate.confidence ?? 0).compareTo(
+    current.confidence ?? 0,
+  );
   if (byConfidence != 0) return byConfidence > 0;
   return candidate.text.trim().length > current.text.trim().length;
 }

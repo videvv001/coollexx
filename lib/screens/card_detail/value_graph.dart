@@ -18,10 +18,7 @@ class ValueGraph extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final amounts = buckets
-        .map((b) => b.amount)
-        .whereType<double>()
-        .toList();
+    final amounts = buckets.map((b) => b.amount).whereType<double>().toList();
 
     if (amounts.isEmpty) {
       return SizedBox(

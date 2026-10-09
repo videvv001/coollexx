@@ -14,6 +14,7 @@ import '../../state/app_state.dart';
 import '../../widgets/photo_placeholder.dart';
 import '../add_manual/add_manual_screen.dart';
 import '../capture/batch_triage_screen.dart';
+import '../capture/binder_scan_screen.dart';
 import '../capture/capture_route.dart';
 import '../capture/capture_screen.dart';
 import '../capture/live_framing.dart';
@@ -52,7 +53,7 @@ extension on _ViewMode {
   };
 }
 
-enum _AddAction { takePhoto, uploadImage, addWithoutImage }
+enum _AddAction { takePhoto, uploadImage, scanBinder, addWithoutImage }
 
 class FolderScreen extends StatefulWidget {
   const FolderScreen({super.key, required this.releaseId});
@@ -148,6 +149,12 @@ class _FolderScreenState extends State<FolderScreen> {
               onTap: () => Navigator.pop(context, _AddAction.uploadImage),
             ),
             ListTile(
+              leading: const Icon(Icons.grid_view_outlined),
+              title: const Text('Scan binder'),
+              subtitle: const Text('One photo, every card on the page'),
+              onTap: () => Navigator.pop(context, _AddAction.scanBinder),
+            ),
+            ListTile(
               leading: const Icon(Icons.add_circle_outline),
               title: const Text('Add without image'),
               onTap: () => Navigator.pop(context, _AddAction.addWithoutImage),
@@ -169,6 +176,15 @@ class _FolderScreenState extends State<FolderScreen> {
         break;
       case _AddAction.uploadImage:
         _uploadImage();
+        break;
+      case _AddAction.scanBinder:
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            settings: const RouteSettings(name: captureRouteName),
+            builder: (_) => BinderScanScreen(boundReleaseId: widget.releaseId),
+          ),
+        );
         break;
       case _AddAction.addWithoutImage:
         Navigator.push(

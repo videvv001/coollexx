@@ -194,6 +194,7 @@ class CollectionRepository {
           name: original.name,
           number: original.number,
           rarity: original.rarity,
+          variant: original.variant,
           language: original.language,
           kind: original.kind,
           color: original.color,

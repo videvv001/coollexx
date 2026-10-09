@@ -15,37 +15,38 @@ ThemeData buildAppTheme(Brightness brightness) {
   // overridden — tonalSpot's tint on those looked purple-gray, not iOS
   // gray, in either brightness.
   final scheme =
-      ColorScheme.fromSeed(seedColor: accentSeed, brightness: brightness)
-          .copyWith(
-            surface: dark ? Colors.black : Colors.white,
-            onSurface: dark
-                ? const Color(0xFFF2F2F7)
-                : const Color(0xFF1C1C1E),
-            onSurfaceVariant: const Color(0xFF8E8E93), // iOS systemGray, same in both
-            surfaceContainerHighest: dark
-                ? const Color(0xFF1C1C1E)
-                : const Color(0xFFF2F2F7),
-            outline: dark ? const Color(0xFF48484A) : const Color(0xFFC7C7CC),
-            outlineVariant: dark
-                ? const Color(0xFF38383A)
-                : const Color(0xFFE5E5EA),
-            primary: accentSeed,
-            onPrimary: Colors.white,
-            primaryContainer: dark
-                ? const Color(0xFF0A2A4D)
-                : const Color(0xFFE5F1FF),
-            onPrimaryContainer: dark
-                ? const Color(0xFFAFD4FF)
-                : const Color(0xFF00408A),
-          );
+      ColorScheme.fromSeed(
+        seedColor: accentSeed,
+        brightness: brightness,
+      ).copyWith(
+        surface: dark ? Colors.black : Colors.white,
+        onSurface: dark ? const Color(0xFFF2F2F7) : const Color(0xFF1C1C1E),
+        onSurfaceVariant: const Color(
+          0xFF8E8E93,
+        ), // iOS systemGray, same in both
+        surfaceContainerHighest: dark
+            ? const Color(0xFF1C1C1E)
+            : const Color(0xFFF2F2F7),
+        outline: dark ? const Color(0xFF48484A) : const Color(0xFFC7C7CC),
+        outlineVariant: dark
+            ? const Color(0xFF38383A)
+            : const Color(0xFFE5E5EA),
+        primary: accentSeed,
+        onPrimary: Colors.white,
+        primaryContainer: dark
+            ? const Color(0xFF0A2A4D)
+            : const Color(0xFFE5F1FF),
+        onPrimaryContainer: dark
+            ? const Color(0xFFAFD4FF)
+            : const Color(0xFF00408A),
+      );
   const hairlineWidth = 1.0;
   final radius14 = BorderRadius.circular(14);
-  // This project ships Android-only (no ios/ folder), so there's no device
-  // where a ".SF Pro Text" fontFamily hack would actually resolve to the
-  // system font — it would only add an unpredictable fallback-font risk on
-  // Android for no benefit. Flutter's bundled default already reads as a
-  // clean modern sans; only the weight scale changes here.
+  // Plus Jakarta Sans is bundled (assets/fonts) rather than fetched, so it
+  // works offline. Applied to the textTheme too, since that's built from the
+  // stock light/dark themes which don't know about it.
   final textTheme = (dark ? ThemeData.dark() : ThemeData.light()).textTheme
+      .apply(fontFamily: 'PlusJakartaSans')
       .copyWith(
         titleLarge: const TextStyle(fontWeight: FontWeight.w700),
         titleMedium: const TextStyle(fontWeight: FontWeight.w600),
@@ -54,6 +55,7 @@ ThemeData buildAppTheme(Brightness brightness) {
 
   return ThemeData(
     useMaterial3: true,
+    fontFamily: 'PlusJakartaSans',
     brightness: brightness,
     colorScheme: scheme,
     scaffoldBackgroundColor: scheme.surface,

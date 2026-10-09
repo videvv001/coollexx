@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../data/photo_store.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_language.dart';
+import '../../models/printing_variant.dart';
 import '../../models/release_category.dart';
 import '../../models/tcg_card.dart';
 import '../../state/app_state.dart';
@@ -12,6 +13,7 @@ import '../shared/card_category_fields.dart';
 import '../shared/card_image_viewer.dart';
 import '../shared/photo_editor_screen.dart';
 import '../shared/photo_source_sheet.dart';
+import '../shared/printing_fields.dart';
 
 /// Edits every field on a card, including its photo gallery: add photos
 /// (camera/gallery, run through `PhotoEditorScreen`), remove them, and pick
@@ -39,6 +41,7 @@ class _EditCardScreenState extends State<EditCardScreen> {
   late String? _releaseId = widget.card.releaseId;
   late CardLanguage? _language = widget.card.language;
   late String? _rarity = widget.card.rarity;
+  late PrintingVariant _variant = widget.card.variant;
   late String? _kind = widget.card.kind;
   late String? _color = widget.card.color;
   late String? _type = widget.card.type;
@@ -112,6 +115,7 @@ class _EditCardScreenState extends State<EditCardScreen> {
           ? null
           : _numberController.text.trim(),
       rarity: _rarity,
+      variant: _variant,
       language: _language,
       kind: _kind,
       color: _color,
@@ -189,6 +193,8 @@ class _EditCardScreenState extends State<EditCardScreen> {
             type: _type,
             onTypeChanged: (v) => setState(() => _type = v),
           ),
+          const SizedBox(height: 12),
+          PrintingFields(value: _variant, onChanged: (v) => _variant = v),
           const SizedBox(height: 20),
           Text(
             'Collection details',

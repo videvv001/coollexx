@@ -39,9 +39,7 @@ Future<CardTextGuess> scanCardText(
         InputImage.fromFilePath(imagePath),
       );
       blocks.addAll(
-        result.blocks.map(
-          (b) => _toOcrBlock(b, decoded.width, decoded.height),
-        ),
+        result.blocks.map((b) => _toOcrBlock(b, decoded.width, decoded.height)),
       );
     } catch (_) {
       // That script's model may be unavailable (e.g. still downloading on

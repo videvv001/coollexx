@@ -5,6 +5,195 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-10-05
+
+### Added
+- Exact-printing resolution: after the vision model reads a card, it is matched
+  against that card's known printings (found by live web research, cached 30
+  days in the new `printing_candidates` table) by what the photo shows - so a
+  red-treatment manga card resolves to its Red Manga print instead of the
+  ordinary Manga one. No card numbers or printing names are special-cased.
+- Recognition now reports what it sees (treatment colour, background style,
+  manga panels, frame, foil, markers) in a fixed vocabulary shared with printing
+  research, and the AI Scan Test screen shows vision's guess, the known
+  printings, the evidence, the rejected printings and the price query.
+- Wrong-printing guard for web-search prices: a listing worded like another
+  printing of the same card is shown but not used.
+
+### Changed
+- The vision model's printing name is a prediction only; pricing refuses it
+  until it is resolved (`PrintingSource`). Low printing confidence no longer
+  automatically asks for an angled photo - that is requested only for
+  foil/texture doubt (`UncertaintyReason`).
+- Recognition schema: `predicted_variant_*`, `visual` and `uncertainty_reasons`
+  replace `variant_*` and `evidence_needed`. Database schema is now v9.
+
+## [1.7.0] - 2026-10-05
+
+### Added
+- Japanese One Piece prices now come from three marketplaces — YuYu-tei,
+  CardRush and e-Starbox — each asked about the exact printing, in parallel.
+  One failing or finding nothing never fails the rest. Each listing keeps its
+  marketplace's own label, URL, source type and match confidence.
+- e-Starbox is read as a price-comparison source (`PRICE_COMPARISON`), its
+  buyback table is ignored; CardRush graded and condition-grade copies are
+  shown but never priced.
+- The price result lists, per marketplace, whether the exact printing was
+  found, not found, undecidable or failed to load, and marks every other
+  listing NOT USED with the reason.
+- Append-only price history (`price_observations`, DB v8): every observation
+  of a research is saved with its printing, marketplace, URL, source type,
+  raw label, price and match confidence, and is only ever read back for that
+  exact printing. Written from the AI scan/binder test screens.
+- `dart run tool/japanese_price_spike.dart [base|parallel|crew]` runs one live
+  lookup against the three marketplaces.
+
+### Changed
+- When no marketplace has the exact printing, the live web search runs as a
+  fallback with the full printing, its artwork and discovery search terms; its
+  sources are credited to the marketplace their URL belongs to.
+- Prices are only combined within one kind (sale, market, asking); sold-out
+  listings count only when nothing is in stock; a wide spread between exact
+  matches is flagged and lowers confidence.
+
+### Fixed
+- EB04-061's crew-background print was reported as "not listed" at YuYu-tei:
+  it is an OP17 pack card, listed only on OP17's page, and the lookup built
+  the set page from the number prefix. YuYu-tei is now searched by number
+  across all sets, and the print is matched by its own label.
+
+## [1.6.0] - 2026-10-05
+
+### Added
+- Cards now record which physical printing they are (`TcgCard.variant`:
+  family base/parallel/super parallel/special/promo/other/unknown, a specific
+  printing name, and an artwork note), stored in three new nullable `cards`
+  columns (DB v7). Card number and rarity can't tell printings apart (EB04-061
+  is one SEC with a base, a parallel and a crew-art print). Existing cards
+  migrate as *unknown*, never base. Editable under "Printing" on Edit card.
+- AI recognition returns the printing (family, name, artwork description,
+  visible markers, candidates) and separate `logical_card` / `exact_printing`
+  confidences, so the artwork it saw is kept instead of being flattened into
+  one variant string.
+
+### Changed
+- Pricing refuses an unknown printing (`PrintingVerificationRequired`) instead
+  of treating it as base, in both the Yuyu-tei and AI research services.
+- Yuyu-tei matching reads each listing's full `(…)` suffix list and prices a
+  printing only on an exact verified label + rarity match (base, parallel
+  today). Anything else is `InsufficientEvidence` with the listings shown.
+
+### Fixed
+- A super parallel / crew-art print was priced as the plain parallel whenever
+  Yuyu-tei listed just one alternate (EB04-061: 5,980円 instead of "no listing").
+- Copying a card to another folder now carries its printing over.
+
+## [1.5.1] - 2026-10-04
+
+### Added
+- Price results now show the last sold price (with its date) and the lowest
+  current listing next to the estimate, and the AI search is asked to look for
+  both. Binder scan cards show them too.
+- Prices found in another currency (e.g. an EUR eBay sale) are converted to
+  the requested one at the live ECB rate (frankfurter.dev, fetched alongside
+  the search, so no extra wait) instead of being thrown away; the page's own
+  price is shown as "converted from". The rate is never taken from the model,
+  and if the rate lookup fails such sources are excluded as before.
+
+### Changed
+- English price research is limited to TCGplayer and eBay (USD), about half
+  the time of an open-web search (17s -> 9-13s measured). Change the sites in
+  `PricingConfig.sourceRules`.
+
+## [1.5.0] - 2026-10-04
+
+### Added
+- Dev-only slot for the DeepSeek API key: `lib/dev_secrets.dart` is
+  gitignored (copy it from `lib/dev_secrets.example.dart`), so the key never
+  lands in the repo while the recognition provider is wired up for testing.
+- Live price research groundwork: a `PriceResearchService` interface with an
+  OpenAI implementation that forces a live web search (Responses API
+  `web_search`, `tool_choice: required`) and returns a typed result. A
+  response without a completed search is never accepted as a price, source
+  URLs the search didn't visit are dropped, and the estimate/range are
+  computed from the kept sources rather than taken from the model. Not yet
+  wired into any screen; `dart run tool/price_research_spike.dart` runs one
+  real research call. Key goes in `openaiApiKey` in `lib/dev_secrets.dart`.
+- AI card recognition behind a `CardRecognitionService` interface, with
+  OpenAI (`gpt-6-luna`) and DeepSeek (`deepseek-flash`, DeepSeek-V4.1-Flash)
+  implementations. A confident card with an uncertain printing (unknown
+  language/variant, or printing confidence under the configured threshold)
+  comes back as "needs verification", never as a match.
+- Me tab: "AI (testing)" switch to pick the recognition provider, and a
+  "Try AI scan" screen (photo or upload → recognition → editable details →
+  live price research with sources). Nothing it does is saved.
+- Price research provider is a testing switch too (OpenAI / DeepSeek). The
+  same "no proof of a live search → no price" check applies to both. A real
+  DeepSeek call confirmed its API runs no search: it returned no search step
+  and itself replied that no web-search tool was available, so it can't
+  supply live prices; its answer stays visible in the raw response.
+- New "Scan binder" option on both the Collection and the folder add menus,
+  alongside Take a photo / Upload from gallery. Photograph a binder page or
+  pick several page images at once, and the app finds every card on each
+  one, corrects its perspective and crops it out upright. Keep adding pages
+  - photos and uploads mixed freely - then save the lot in one go.
+- Binder scan results are reviewable before anything is saved: each page
+  shows its detected cards outlined on the page image, with the crops it
+  produced underneath. Drop a card the detector got wrong, drop a whole
+  page, or retry a page that failed, then hand the rest to the same batch
+  triage screen a burst capture ends on - OCR autofill, renaming and
+  assigning to a release all work exactly as they already did.
+- A page that can't be read, or that yields no cards, is reported on its own
+  without costing you the pages already scanned; multi-page uploads show
+  which page is being processed and what it found as they go. Leaving with
+  unsaved cards prompts the same save/discard choice the camera does, and
+  the scan survives backgrounding and process death like a burst does.
+- Me tab: "Try AI binder scan". Photograph or upload a binder page; the cards
+  are found on-device, every one is recognized by the AI at once (three at a
+  time), and "Research prices" prices all the confidently identified ones in
+  one go. Tap any card to open it in the single-card screen to correct it.
+  Saves nothing.
+- Japanese One Piece prices now come straight from Yuyu-tei's set page
+  (`YuyuteiPriceService`) instead of an AI web search: about 1s instead of
+  8-17s, in yen, whichever research provider is picked. A search limited to
+  yuyu-tei.jp was tried first and finds only the shop's news/FAQ pages, never
+  card listings. A regular printing is priced; for an alternate printing it's
+  priced only when the number has exactly one, otherwise every printing
+  Yuyu-tei lists is shown to pick from. Other games/languages are unchanged.
+- `PricingConfig.sourceRules`: optional per-language site allowlist for the AI
+  price search (empty by default), which also sets the currency to expect.
+- `price_research_spike.dart jp` researches the Japanese printing.
+
+### Changed
+- App renamed to TCGX (launcher label and in-app title); package name and
+  database file are unchanged so existing installs keep their data.
+- App font is now Plus Jakarta Sans, bundled in `assets/fonts/` so it works
+  offline.
+- Binder card detection runs entirely on-device in pure Dart (no OpenCV, no
+  network) on a background isolate. It separates cards from the dark pockets
+  around them by brightness, measured against a local rather than a
+  page-wide threshold so an unevenly lit page doesn't lose its dim corner,
+  and tests each candidate against its convex hull so a card whose dark
+  artwork reaches its own border is still found whole. Measured at 24 of 24
+  cards across three real hand-held binder photos - tilted, glare-blown,
+  with empty slots - plus one background shape wrongly offered as a card,
+  which is one tap to remove in review.
+- A pending capture item's sequence number is now one past the highest so
+  far rather than the item count. Identical for a burst, which only ever
+  appends, but binder scan can drop a card mid-session, and a count would
+  then reuse a live sequence and scramble the order cards are read back in.
+
+### Fixed
+- Card recognition no longer gives up when the card number is too small to
+  read: it now identifies the card from artwork, name, power/cost, color and
+  set symbol and infers the number. An inferred number only counts as
+  identified above the printing-confidence threshold; below it the card comes
+  back as "needs verification" with the number editable.
+- The Me-tab smoke tests mock shared_preferences and scroll to the footer, so
+  they no longer fail on the settings providers and the longer Me list.
+- Release APKs now request the INTERNET permission; only debug/profile
+  builds had it, so any network call would have failed in a release build.
+
 ## [1.4.0] - 2026-09-23
 
 ### Added

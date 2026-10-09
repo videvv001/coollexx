@@ -21,7 +21,11 @@ Future<void> openCardImageViewer(
 }
 
 class CardImageViewer extends StatefulWidget {
-  const CardImageViewer({super.key, required this.paths, this.initialIndex = 0});
+  const CardImageViewer({
+    super.key,
+    required this.paths,
+    this.initialIndex = 0,
+  });
 
   final List<String> paths;
   final int initialIndex;

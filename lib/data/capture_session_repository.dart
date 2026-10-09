@@ -98,12 +98,25 @@ class CaptureSessionRepository {
   /// find it again).
   Future<CaptureItem> addItem(String sessionId, String path) async {
     final db = await _db;
-    final count = await itemCount(sessionId);
+    // One past the highest sequence so far, rather than the item count —
+    // identical for a burst, which only ever appends, but a binder scan can
+    // drop a wrongly detected card mid-session (see [removeItem]), and a
+    // count would then hand the next item a sequence a surviving item
+    // already holds, scrambling the order `items` reads them back in.
+    final next =
+        (Sqflite.firstIntValue(
+              await db.rawQuery(
+                'SELECT MAX(sequence) FROM capture_items WHERE sessionId = ?',
+                [sessionId],
+              ),
+            ) ??
+            -1) +
+        1;
     final item = CaptureItem(
       id: _uuid.v4(),
       sessionId: sessionId,
       path: path,
-      sequence: count,
+      sequence: next,
       capturedAt: DateTime.now(),
     );
     await db.insert('capture_items', item.toMap());
@@ -127,6 +140,16 @@ class CaptureSessionRepository {
       where: 'id = ?',
       whereArgs: [item.id],
     );
+    await PhotoStore.instance.delete(item.path);
+  }
+
+  /// Drops one still-pending item and its file. This is the binder scan
+  /// review's "that isn't a card" and "remove this page" action, and it is
+  /// only ever valid before commit — afterwards the file is a real card's
+  /// photo and deleting it would blank that card.
+  Future<void> removeItem(CaptureItem item) async {
+    final db = await _db;
+    await db.delete('capture_items', where: 'id = ?', whereArgs: [item.id]);
     await PhotoStore.instance.delete(item.path);
   }
 

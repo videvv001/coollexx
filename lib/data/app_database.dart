@@ -23,7 +23,7 @@ class AppDatabase {
     final path = p.join(dir.path, 'pokedex_tcg.db');
     return openDatabase(
       path,
-      version: 6,
+      version: 9,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE releases (
@@ -48,6 +48,9 @@ class AppDatabase {
             name TEXT,
             number TEXT,
             rarity TEXT,
+            variantFamily TEXT,
+            variantName TEXT,
+            artworkVariant TEXT,
             language TEXT,
             kind TEXT,
             color TEXT,
@@ -102,6 +105,48 @@ class AppDatabase {
         await db.execute(
           'CREATE INDEX capture_items_session ON capture_items (sessionId)',
         );
+        await db.execute('''
+          CREATE TABLE price_observations (
+            id TEXT PRIMARY KEY,
+            cardId TEXT,
+            game TEXT NOT NULL,
+            cardNumber TEXT NOT NULL,
+            language TEXT NOT NULL,
+            officialRarity TEXT,
+            variantFamily TEXT NOT NULL,
+            variantName TEXT,
+            artworkVariant TEXT,
+            marketplace TEXT NOT NULL,
+            sourceType TEXT NOT NULL,
+            sourceLabel TEXT,
+            url TEXT NOT NULL,
+            price REAL NOT NULL,
+            currency TEXT NOT NULL,
+            isGraded INTEGER NOT NULL DEFAULT 0,
+            soldOut INTEGER NOT NULL DEFAULT 0,
+            condition TEXT,
+            matchConfidence REAL,
+            usedInEstimate INTEGER NOT NULL DEFAULT 0,
+            notUsedReason TEXT,
+            observedAt TEXT,
+            researchedAt TEXT NOT NULL,
+            provider TEXT
+          )
+        ''');
+        await db.execute(
+          'CREATE INDEX price_observations_printing ON price_observations (game, cardNumber, language, variantFamily, variantName)',
+        );
+        await db.execute('''
+          CREATE TABLE printing_candidates (
+            id TEXT PRIMARY KEY,
+            game TEXT NOT NULL,
+            cardNumber TEXT NOT NULL,
+            language TEXT NOT NULL,
+            candidates TEXT NOT NULL,
+            researchedAt TEXT NOT NULL,
+            provider TEXT
+          )
+        ''');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -165,6 +210,62 @@ class AppDatabase {
           await db.execute(
             'CREATE INDEX capture_items_session ON capture_items (sessionId)',
           );
+        }
+        if (oldVersion < 7) {
+          // Physical-printing identity. NULL = unknown: existing cards are
+          // deliberately not backfilled as base.
+          await db.execute('ALTER TABLE cards ADD COLUMN variantFamily TEXT');
+          await db.execute('ALTER TABLE cards ADD COLUMN variantName TEXT');
+          await db.execute('ALTER TABLE cards ADD COLUMN artworkVariant TEXT');
+        }
+        if (oldVersion < 8) {
+          // Append-only price history, one row per marketplace observation of
+          // an exact printing. See PriceObservationRepository.
+          await db.execute('''
+          CREATE TABLE price_observations (
+            id TEXT PRIMARY KEY,
+            cardId TEXT,
+            game TEXT NOT NULL,
+            cardNumber TEXT NOT NULL,
+            language TEXT NOT NULL,
+            officialRarity TEXT,
+            variantFamily TEXT NOT NULL,
+            variantName TEXT,
+            artworkVariant TEXT,
+            marketplace TEXT NOT NULL,
+            sourceType TEXT NOT NULL,
+            sourceLabel TEXT,
+            url TEXT NOT NULL,
+            price REAL NOT NULL,
+            currency TEXT NOT NULL,
+            isGraded INTEGER NOT NULL DEFAULT 0,
+            soldOut INTEGER NOT NULL DEFAULT 0,
+            condition TEXT,
+            matchConfidence REAL,
+            usedInEstimate INTEGER NOT NULL DEFAULT 0,
+            notUsedReason TEXT,
+            observedAt TEXT,
+            researchedAt TEXT NOT NULL,
+            provider TEXT
+          )
+          ''');
+          await db.execute(
+            'CREATE INDEX price_observations_printing ON price_observations (game, cardNumber, language, variantFamily, variantName)',
+          );
+        }
+        if (oldVersion < 9) {
+          // Known printings of a logical card, from printing research.
+          await db.execute('''
+          CREATE TABLE printing_candidates (
+            id TEXT PRIMARY KEY,
+            game TEXT NOT NULL,
+            cardNumber TEXT NOT NULL,
+            language TEXT NOT NULL,
+            candidates TEXT NOT NULL,
+            researchedAt TEXT NOT NULL,
+            provider TEXT
+          )
+          ''');
         }
       },
       onConfigure: (db) async {

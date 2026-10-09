@@ -106,7 +106,10 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   double _coverScale() {
     final image = _image!;
     final viewport = _viewportSize!;
-    return math.max(viewport.width / image.width, viewport.height / image.height);
+    return math.max(
+      viewport.width / image.width,
+      viewport.height / image.height,
+    );
   }
 
   Future<void> _save() async {
@@ -123,19 +126,18 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     );
     final x = topLeft.dx.clamp(0, image.width.toDouble()).round();
     final y = topLeft.dy.clamp(0, image.height.toDouble()).round();
-    final w = (bottomRight.dx - topLeft.dx)
-        .clamp(1, image.width - x)
-        .round();
-    final h = (bottomRight.dy - topLeft.dy)
-        .clamp(1, image.height - y)
-        .round();
+    final w = (bottomRight.dx - topLeft.dx).clamp(1, image.width - x).round();
+    final h = (bottomRight.dy - topLeft.dy).clamp(1, image.height - y).round();
 
     // Crop + JPEG-encode is the same CPU-heavy pure-Dart codec work as
     // decode/rotate, so it also runs off the UI isolate.
-    final jpgBytes = await compute(
-      _cropAndEncodeJpg,
-      (image, x, y, math.max(1, w), math.max(1, h)),
-    );
+    final jpgBytes = await compute(_cropAndEncodeJpg, (
+      image,
+      x,
+      y,
+      math.max(1, w),
+      math.max(1, h),
+    ));
 
     final dir = await getTemporaryDirectory();
     final outFile = File(p.join(dir.path, '${const Uuid().v4()}.jpg'));
@@ -244,21 +246,33 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                       ? null
                       : () => _rotate(-90),
                   icon: const Icon(Icons.rotate_left, color: Colors.white),
-                  label: const Text('Rotate left', style: TextStyle(color: Colors.white)),
+                  label: const Text(
+                    'Rotate left',
+                    style: TextStyle(color: Colors.white),
+                  ),
                 ),
                 TextButton.icon(
                   onPressed: _image == null || _rotating || _saving
                       ? null
                       : () => _rotate(90),
                   icon: const Icon(Icons.rotate_right, color: Colors.white),
-                  label: const Text('Rotate right', style: TextStyle(color: Colors.white)),
+                  label: const Text(
+                    'Rotate right',
+                    style: TextStyle(color: Colors.white),
+                  ),
                 ),
                 TextButton.icon(
                   onPressed: _image == null || _rotating || _saving
                       ? null
                       : _centerAndFit,
-                  icon: const Icon(Icons.filter_center_focus, color: Colors.white),
-                  label: const Text('Recenter', style: TextStyle(color: Colors.white)),
+                  icon: const Icon(
+                    Icons.filter_center_focus,
+                    color: Colors.white,
+                  ),
+                  label: const Text(
+                    'Recenter',
+                    style: TextStyle(color: Colors.white),
+                  ),
                 ),
               ],
             ),

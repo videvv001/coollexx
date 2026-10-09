@@ -115,7 +115,9 @@ class _BatchTriageScreenState extends State<BatchTriageScreen> {
 
     for (final id in ids) {
       final target = _findCard(id);
-      if (target == null || !target.isUntitled || target.thumbnailPath == null) {
+      if (target == null ||
+          !target.isUntitled ||
+          target.thumbnailPath == null) {
         continue;
       }
 
@@ -135,7 +137,9 @@ class _BatchTriageScreenState extends State<BatchTriageScreen> {
       final guess = await scanCardText(target.thumbnailPath!, category);
       if (!mounted) return;
       setState(() => _scanning.remove(id));
-      if (guess.name == null && guess.number == null && guess.language == null) {
+      if (guess.name == null &&
+          guess.number == null &&
+          guess.language == null) {
         continue;
       }
 

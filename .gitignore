@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Dev-only API keys (never commit)
+lib/dev_secrets.dart
+tool/*.out.json

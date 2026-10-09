@@ -14,6 +14,7 @@ import '../../models/tcg_card.dart';
 import '../../state/app_state.dart';
 import '../../widgets/photo_placeholder.dart';
 import '../capture/batch_triage_screen.dart';
+import '../capture/binder_scan_screen.dart';
 import '../capture/capture_route.dart';
 import '../capture/capture_screen.dart';
 import '../folder/folder_screen.dart';
@@ -37,7 +38,7 @@ extension on _DisplayMode {
       isPortrait ? 'Switch to landscape view' : 'Switch to portrait view';
 }
 
-enum _AddAction { newRelease, takePhoto, uploadGallery }
+enum _AddAction { newRelease, takePhoto, uploadGallery, scanBinder }
 
 extension on _SortMode {
   String get label => switch (this) {
@@ -457,6 +458,12 @@ class _HomeScreenState extends State<HomeScreen> {
               title: const Text('Upload from gallery'),
               onTap: () => Navigator.pop(context, _AddAction.uploadGallery),
             ),
+            ListTile(
+              leading: const Icon(Icons.grid_view_outlined),
+              title: const Text('Scan binder'),
+              subtitle: const Text('One photo, every card on the page'),
+              onTap: () => Navigator.pop(context, _AddAction.scanBinder),
+            ),
           ],
         ),
       ),
@@ -477,6 +484,15 @@ class _HomeScreenState extends State<HomeScreen> {
         break;
       case _AddAction.uploadGallery:
         _pickFromGallery(state);
+        break;
+      case _AddAction.scanBinder:
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            settings: const RouteSettings(name: captureRouteName),
+            builder: (_) => const BinderScanScreen(),
+          ),
+        );
         break;
     }
   }

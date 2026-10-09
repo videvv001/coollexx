@@ -1,4 +1,4 @@
-# Pokédex TCG Collection
+# TCGX
 
 A Flutter app for cataloguing a physical Pokémon TCG card collection: capture
 a card with the camera, file it under a set (release) and optional
@@ -14,7 +14,11 @@ cards for trade or wishlist. Everything is local — SQLite on-device via
 - **Sets** (`lib/screens/sets`, `lib/screens/folder`) — browse a release's
   sub-folders and cards.
 - **Trade** (`lib/screens/trade`) — cards marked `forTrade`.
-- **Me** (`lib/screens/me`) — profile/settings tab.
+- **Me** (`lib/screens/me`) — profile/settings tab, including the testing
+  "AI (testing)" switch (card recognition via OpenAI or DeepSeek) and the
+  "Try AI scan" / "Try AI binder scan" screens. Those are the only network calls; see `lib/pricing/`
+  and `lib/state/ai_settings.dart`. Keys go in the gitignored
+  `lib/dev_secrets.dart` (template: `lib/dev_secrets.example.dart`).
 - **Card detail** (`lib/screens/card_detail`) — a single card's info, photo,
   and value history (chart via `fl_chart`), with a sheet to add a new value
   entry.
@@ -47,6 +51,31 @@ cards for trade or wishlist. Everything is local — SQLite on-device via
 (JP/ENG/CN/KR), `ValueEntry` — see `lib/models/`. A card's rarity/kind/
 color/type options are controlled per `ReleaseCategory` (Pokémon/One
 Piece/Others) — see `CardFieldOptions`.
+
+A card number is not a collectible: `rarity` is the official printed rarity,
+and `PrintingVariant` (`lib/models/printing_variant.dart`) says which physical
+printing it is (family, specific name, artwork). Unknown is not base, and
+pricing refuses unknown printings. Marketplace wording (e.g. Yuyu-tei's
+`(パラレル)`) lives only in that marketplace's adapter.
+
+Exact-printing resolution (`lib/pricing`): vision recognition only DESCRIBES the
+photo (`VisualObservation`: treatment colour, background style, manga panels,
+frame, foil, markers) and PREDICTS a printing - a hypothesis marked
+`PrintingSource.visionHypothesis`, which pricing refuses.
+`PrintingResolutionService` then finds the card's known `PrintingCandidate`s
+(`printing_candidates` cache, else live-web-search `PrintingResearchService`,
+evidence URLs verified) and picks the one the photo fits; only a resolved
+printing is priced (`CardIdentifier` chains the two). Official rarity, our
+canonical variant name and marketplace aliases are kept separate; aliases only
+find and match listings (longest alias wins, so "Manga Rare" never claims a
+"Red Manga Rare" listing). AI Scan Test shows every step.
+
+Japanese One Piece pricing (`lib/pricing`): `JapanesePriceResearchService`
+asks `YuyuteiPriceSource`, `CardRushPriceSource` and `EStarboxPriceSource`
+(each a `JapanesePriceSource`) about the exact printing, then falls back to
+the live web search if none has it. Each source owns its site's search,
+parsing and verified labels; observations are saved by
+`PriceObservationRepository` (`price_observations`, append-only).
 
 ## Running it
 

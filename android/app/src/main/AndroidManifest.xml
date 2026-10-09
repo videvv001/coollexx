@@ -1,6 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Card recognition + live price research call the network. Debug/profile
+         manifests already had this; release builds didn't, so every request
+         would fail silently in a release APK. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="coollexx"
+        android:label="TCGX"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

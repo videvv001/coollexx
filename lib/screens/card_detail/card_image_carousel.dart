@@ -62,11 +62,8 @@ class _CardImageCarouselState extends State<CardImageCarousel> {
                 itemCount: paths.length,
                 onPageChanged: (i) => setState(() => _index = i),
                 itemBuilder: (context, i) => GestureDetector(
-                  onTap: () => openCardImageViewer(
-                    context,
-                    paths,
-                    initialIndex: i,
-                  ),
+                  onTap: () =>
+                      openCardImageViewer(context, paths, initialIndex: i),
                   child: Image.file(File(paths[i]), fit: BoxFit.cover),
                 ),
               ),

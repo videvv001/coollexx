@@ -18,6 +18,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:pokedex_tcg/main.dart';
@@ -70,6 +71,8 @@ void main() {
   late Directory tempDir;
 
   setUp(() {
+    // OcrSettings / AiSettings read shared_preferences on construction.
+    SharedPreferences.setMockInitialValues({});
     tempDir = Directory.systemTemp.createTempSync('pokedex_tcg_test');
     PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir);
   });
@@ -102,9 +105,11 @@ void main() {
 
     await tester.tap(find.text('Me'));
     await tester.pump();
-    await _pumpUntilFound(
-      tester,
+    await _pumpUntilFound(tester, find.text('Light'));
+    // The footer sits below the fold of the test viewport.
+    await tester.scrollUntilVisible(
       find.text('Everything is stored on this phone'),
+      300,
     );
   });
 }

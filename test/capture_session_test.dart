@@ -52,7 +52,8 @@ Future<_Repos> _openDb() async {
   ''');
   await db.execute('''
     CREATE TABLE cards (
-      id TEXT PRIMARY KEY, name TEXT, number TEXT, rarity TEXT, language TEXT,
+      id TEXT PRIMARY KEY, name TEXT, number TEXT, rarity TEXT, variantFamily TEXT, variantName TEXT,
+      artworkVariant TEXT, language TEXT,
       kind TEXT, color TEXT, type TEXT, condition TEXT,
       copies INTEGER NOT NULL DEFAULT 1, releaseId TEXT,
       photoPaths TEXT NOT NULL DEFAULT '', pricePaid REAL, datePaid TEXT,

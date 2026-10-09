@@ -41,10 +41,7 @@ class PhotoPreviewScreen extends StatelessWidget {
         ],
       ),
       body: Center(
-        child: InteractiveViewer(
-          maxScale: 4,
-          child: Image.file(File(path)),
-        ),
+        child: InteractiveViewer(maxScale: 4, child: Image.file(File(path))),
       ),
     );
   }

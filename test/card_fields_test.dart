@@ -28,9 +28,11 @@ void main() {
     expect(restored.photoPaths, card.photoPaths);
   });
 
-  test('release and card language/kind/color/type persist via repository', () async {
-    final db = await databaseFactory.openDatabase(inMemoryDatabasePath);
-    await db.execute('''
+  test(
+    'release and card language/kind/color/type persist via repository',
+    () async {
+      final db = await databaseFactory.openDatabase(inMemoryDatabasePath);
+      await db.execute('''
       CREATE TABLE releases (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, dateCreated TEXT NOT NULL,
         coverPhotoPath TEXT, coverPortrait INTEGER NOT NULL DEFAULT 0,
@@ -40,9 +42,10 @@ void main() {
         isFavorite INTEGER NOT NULL DEFAULT 0
       )
     ''');
-    await db.execute('''
+      await db.execute('''
       CREATE TABLE cards (
-        id TEXT PRIMARY KEY, name TEXT, number TEXT, rarity TEXT, language TEXT,
+        id TEXT PRIMARY KEY, name TEXT, number TEXT, rarity TEXT, variantFamily TEXT, variantName TEXT,
+      artworkVariant TEXT, language TEXT,
         kind TEXT, color TEXT, type TEXT, condition TEXT,
         copies INTEGER NOT NULL DEFAULT 1, releaseId TEXT,
         photoPaths TEXT NOT NULL DEFAULT '', pricePaid REAL, datePaid TEXT,
@@ -50,33 +53,34 @@ void main() {
         isFavorite INTEGER NOT NULL DEFAULT 0, notes TEXT, createdAt TEXT NOT NULL
       )
     ''');
-    final repo = CollectionRepository(dbOverride: () => db);
+      final repo = CollectionRepository(dbOverride: () => db);
 
-    final release = await repo.createRelease(
-      'OP-01',
-      category: ReleaseCategory.onePiece,
-    );
-    await repo.updateRelease(release.copyWith(language: CardLanguage.jp));
-    final storedRelease = await repo.release(release.id);
-    expect(storedRelease!.language, CardLanguage.jp);
-    expect(storedRelease.category, ReleaseCategory.onePiece);
+      final release = await repo.createRelease(
+        'OP-01',
+        category: ReleaseCategory.onePiece,
+      );
+      await repo.updateRelease(release.copyWith(language: CardLanguage.jp));
+      final storedRelease = await repo.release(release.id);
+      expect(storedRelease!.language, CardLanguage.jp);
+      expect(storedRelease.category, ReleaseCategory.onePiece);
 
-    final card = await repo.createCard(
-      TcgCard(
-        id: 'card1',
-        releaseId: release.id,
-        language: CardLanguage.eng,
-        kind: 'Leader',
-        color: 'Red',
-        createdAt: DateTime.now(),
-      ),
-    );
-    final storedCard = await repo.card(card.id);
-    expect(storedCard!.language, CardLanguage.eng);
-    expect(storedCard.kind, 'Leader');
-    expect(storedCard.color, 'Red');
-    expect(storedCard.type, isNull);
+      final card = await repo.createCard(
+        TcgCard(
+          id: 'card1',
+          releaseId: release.id,
+          language: CardLanguage.eng,
+          kind: 'Leader',
+          color: 'Red',
+          createdAt: DateTime.now(),
+        ),
+      );
+      final storedCard = await repo.card(card.id);
+      expect(storedCard!.language, CardLanguage.eng);
+      expect(storedCard.kind, 'Leader');
+      expect(storedCard.color, 'Red');
+      expect(storedCard.type, isNull);
 
-    await db.close();
-  });
+      await db.close();
+    },
+  );
 }

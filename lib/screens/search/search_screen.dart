@@ -150,13 +150,10 @@ class _SearchScreenState extends State<SearchScreen> {
                       padding: const EdgeInsets.only(bottom: 4),
                       child: Text(
                         'CARDS',
-                        style: Theme.of(context).textTheme.labelLarge
-                            ?.copyWith(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
-                              letterSpacing: 0.4,
-                            ),
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          letterSpacing: 0.4,
+                        ),
                       ),
                     ),
                   GridView.builder(

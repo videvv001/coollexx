@@ -10,12 +10,19 @@ class MetadataField {
   final String value;
 }
 
-typedef _FieldBuilder = List<MetadataField> Function(TcgCard card, Release? release);
+typedef _FieldBuilder =
+    List<MetadataField> Function(TcgCard card, Release? release);
 
 const _dash = '—';
 
 String _releaseLanguage(TcgCard card, Release? release) =>
     '${release?.name ?? _dash} / ${card.language?.label ?? _dash}';
+
+/// "SEC / Parallel"; the printing stays a dash until it is known (it is not
+/// assumed to be base).
+String _rarityPrinting(TcgCard card) =>
+    '${card.rarity ?? _dash} / '
+    '${card.variant.isResolved ? card.variant.displayLabel : _dash}';
 
 List<MetadataField> _pokemonFields(TcgCard card, Release? release) {
   final number = card.number;
@@ -27,7 +34,10 @@ List<MetadataField> _pokemonFields(TcgCard card, Release? release) {
     MetadataField('ID', id),
     MetadataField('RELEASE / LANGUAGE', _releaseLanguage(card, release)),
     MetadataField('KIND', card.kind ?? _dash),
-    MetadataField('RARITY / TYPE', '${card.rarity ?? _dash} / ${card.type ?? _dash}'),
+    MetadataField(
+      'RARITY / TYPE',
+      '${card.rarity ?? _dash} / ${card.type ?? _dash}',
+    ),
     MetadataField('CONDITION', card.condition?.label ?? _dash),
   ];
 }
@@ -37,7 +47,7 @@ List<MetadataField> _onePieceFields(TcgCard card, Release? release) => [
   MetadataField('RELEASE / LANGUAGE', _releaseLanguage(card, release)),
   MetadataField('KIND', card.kind ?? _dash),
   MetadataField('COLOR', card.color ?? _dash),
-  MetadataField('RARITY', card.rarity ?? _dash),
+  MetadataField('RARITY / PRINTING', _rarityPrinting(card)),
   MetadataField('CONDITION', card.condition?.label ?? _dash),
 ];
 

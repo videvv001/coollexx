@@ -82,7 +82,8 @@ class CardCategoryFields extends StatelessWidget {
           initialValue: rarityOptions.contains(rarity) ? rarity : null,
           decoration: const InputDecoration(labelText: 'Rarity'),
           items: [
-            for (final r in rarityOptions) DropdownMenuItem(value: r, child: Text(r)),
+            for (final r in rarityOptions)
+              DropdownMenuItem(value: r, child: Text(r)),
           ],
           onChanged: onRarityChanged,
         ),
@@ -92,7 +93,8 @@ class CardCategoryFields extends StatelessWidget {
             initialValue: kindOptions.contains(kind) ? kind : null,
             decoration: const InputDecoration(labelText: 'Kind'),
             items: [
-              for (final k in kindOptions) DropdownMenuItem(value: k, child: Text(k)),
+              for (final k in kindOptions)
+                DropdownMenuItem(value: k, child: Text(k)),
             ],
             onChanged: onKindChanged,
           ),

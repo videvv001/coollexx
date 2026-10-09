@@ -45,7 +45,14 @@ List<OcrBlock> onePieceCard({
   String id = 'OP09-001',
 }) {
   return [
-    block(effect, top: 0.55, bottom: 0.74, left: 0.08, right: 0.92, lineCount: 3),
+    block(
+      effect,
+      top: 0.55,
+      bottom: 0.74,
+      left: 0.08,
+      right: 0.92,
+      lineCount: 3,
+    ),
     block(kind, top: 0.78, bottom: 0.83),
     block(name, top: 0.84, bottom: 0.90),
     block(trait, top: 0.91, bottom: 0.94),
